@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Training - ASR Correction{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">LoRA Fine-Tuning</h1>
+
+<div class="bg-white rounded-lg shadow p-6 mb-6">
+    <h2 class="text-lg font-semibold mb-4">Start New Training</h2>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+        <div>
+            <label class="block text-sm font-medium mb-1">Iterations</label>
+            <input id="iterations" type="number" value="1000" class="w-full border rounded-lg p-2 text-sm">
+        </div>
+        <div>
+            <label class="block text-sm font-medium mb-1">Batch Size</label>
+            <input id="batch_size" type="number" value="2" class="w-full border rounded-lg p-2 text-sm">
+        </div>
+        <div>
+            <label class="block text-sm font-medium mb-1">Learning Rate</label>
+            <input id="learning_rate" type="text" value="2e-5" class="w-full border rounded-lg p-2 text-sm">
+        </div>
+    </div>
+    <button onclick="startTraining()" id="train-btn" class="bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700 text-sm font-medium">
+        Start Training
+    </button>
+    <span id="train-status" class="ml-3 text-sm text-gray-500"></span>
+</div>
+
+<h2 class="text-lg font-semibold mb-3">Training History</h2>
+<div class="bg-white rounded-lg shadow overflow-hidden">
+    <table class="w-full text-sm">
+        <thead class="bg-gray-50">
+            <tr>
+                <th class="px-4 py-2 text-left">ID</th>
+                <th class="px-4 py-2 text-left">Status</th>
+                <th class="px-4 py-2 text-left">Duration</th>
+                <th class="px-4 py-2 text-left">Config</th>
+                <th class="px-4 py-2 text-left">Created</th>
+                <th class="px-4 py-2 text-left">Error</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for job in training_jobs %}
+            <tr class="border-t">
+                <td class="px-4 py-2 font-mono text-xs">{{ job._id[:8] }}...</td>
+                <td class="px-4 py-2">
+                    <span class="{% if job.status == 'completed' %}text-green-600{% elif job.status == 'failed' %}text-red-600{% else %}text-yellow-600{% endif %}">
+                        {{ job.status }}
+                    </span>
+                </td>
+                <td class="px-4 py-2">
+                    {% if job.duration_ms %}{{ "%.1f"|format(job.duration_ms / 60000) }} min{% else %}-{% endif %}
+                </td>
+                <td class="px-4 py-2 text-xs">
+                    {% if job.input_summary %}
+                        iters: {{ job.input_summary.get('iterations', '-') }},
+                        bs: {{ job.input_summary.get('batch_size', '-') }},
+                        lr: {{ job.input_summary.get('learning_rate', '-') }}
+                    {% endif %}
+                </td>
+                <td class="px-4 py-2 text-gray-500">{{ job.created_at.strftime('%m-%d %H:%M') if job.created_at else '-' }}</td>
+                <td class="px-4 py-2 text-xs text-red-500">{{ job.error or '' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<script>
+async function startTraining() {
+    const btn = document.getElementById('train-btn');
+    const status = document.getElementById('train-status');
+    btn.disabled = true;
+    status.textContent = 'Starting...';
+
+    const res = await fetch('/api/train', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            iterations: parseInt(document.getElementById('iterations').value),
+            batch_size: parseInt(document.getElementById('batch_size').value),
+            learning_rate: parseFloat(document.getElementById('learning_rate').value),
+        }),
+    });
+    const data = await res.json();
+
+    if (data.status === 'started') {
+        status.textContent = 'Training started (job: ' + data.job_id + '). Refresh to see progress.';
+    } else if (data.status === 'already_running') {
+        status.textContent = 'Training already in progress.';
+    } else {
+        status.textContent = 'Error: ' + JSON.stringify(data);
+    }
+    btn.disabled = false;
+}
+</script>
+{% endblock %}

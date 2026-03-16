@@ -1,0 +1,273 @@
+{% extends "base.html" %}
+{% block title %}Compare Transcripts - ASR Correction{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">Compare Transcripts</h1>
+
+<!-- Load from past corrections -->
+<div class="bg-white rounded-lg shadow p-6 mb-6">
+    <h2 class="text-lg font-semibold mb-3">Load from Correction History</h2>
+    <div class="flex items-end gap-4">
+        <div class="flex-1">
+            <label class="block text-sm font-medium mb-1">Select a past correction</label>
+            <select id="job-select" class="w-full border rounded-lg p-2 text-sm">
+                <option value="">Loading corrections...</option>
+            </select>
+        </div>
+        <button onclick="loadSelectedJob()" id="load-btn" class="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 text-sm font-medium">
+            Load & Compare
+        </button>
+    </div>
+    <p class="text-xs text-gray-400 mt-2">Or paste transcripts manually below</p>
+</div>
+
+<!-- Manual paste -->
+<div class="bg-white rounded-lg shadow p-6 mb-6">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <div>
+            <label class="block text-sm font-medium mb-1">Original (ASR Output)</label>
+            <textarea id="reference" class="w-full border rounded-lg p-3 text-sm h-40" placeholder="Paste original ASR transcript..."></textarea>
+        </div>
+        <div>
+            <label class="block text-sm font-medium mb-1">Enhanced (Corrected)</label>
+            <textarea id="hypothesis" class="w-full border rounded-lg p-3 text-sm h-40" placeholder="Paste enhanced/corrected transcript..."></textarea>
+        </div>
+    </div>
+
+    <div class="mb-4">
+        <label class="block text-sm font-medium mb-1">Target Terms (optional, JSON array)</label>
+        <textarea id="terms" class="w-full border rounded-lg p-3 text-sm h-20" placeholder='[{"term": "ScreenApp", "category": "product_name", "known_errors": ["Screen App"]}]'></textarea>
+    </div>
+
+    <button onclick="runComparison()" id="compare-btn" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 text-sm font-medium">
+        Compare
+    </button>
+    <span id="compare-status" class="ml-3 text-sm text-gray-500"></span>
+</div>
+
+<div id="results" class="hidden">
+    <!-- Metrics -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-white rounded-lg shadow p-4">
+            <div class="text-sm text-gray-500">WER</div>
+            <div id="wer-val" class="text-2xl font-bold"></div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-4">
+            <div class="text-sm text-gray-500">CER</div>
+            <div id="cer-val" class="text-2xl font-bold"></div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-4">
+            <div class="text-sm text-gray-500">Substitutions</div>
+            <div id="sub-val" class="text-2xl font-bold"></div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-4">
+            <div class="text-sm text-gray-500">Insertions / Deletions</div>
+            <div id="insdel-val" class="text-2xl font-bold"></div>
+        </div>
+    </div>
+
+    <!-- Side-by-side diff -->
+    <h2 class="text-lg font-semibold mb-3">Transcript Comparison (Original → Corrected)</h2>
+    <div class="diff-wrapper">
+        <div class="diff-col">
+            <div class="diff-col-header">
+                Original (ASR Output)
+                <span class="del" style="font-size:12px;margin-left:6px;">removed</span>
+            </div>
+            <div class="diff-scroll" id="scroll-left">
+                <div class="diff-box" id="diff-left"></div>
+            </div>
+        </div>
+        <div class="diff-col">
+            <div class="diff-col-header">
+                Corrected (Enhanced)
+                <span class="add" style="font-size:12px;margin-left:6px;">added</span>
+            </div>
+            <div class="diff-scroll" id="scroll-right">
+                <div class="diff-box" id="diff-right"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- TTER -->
+    <div id="tter-section" class="hidden mt-6">
+        <h2 class="text-lg font-semibold mb-3">TTER Results</h2>
+        <div class="bg-white rounded-lg shadow p-4">
+            <div class="text-sm text-gray-500 mb-1">Overall TTER</div>
+            <div id="tter-val" class="text-2xl font-bold mb-3"></div>
+            <div id="tter-details" class="text-sm"></div>
+        </div>
+    </div>
+
+    <!-- Raw JSON -->
+    <details class="bg-white rounded-lg shadow p-4 mt-6">
+        <summary class="text-sm font-medium cursor-pointer">Raw Result JSON</summary>
+        <pre id="json-output" class="text-xs bg-gray-50 p-3 rounded overflow-auto max-h-60 mt-2"></pre>
+    </details>
+</div>
+
+<style>
+    .diff-wrapper { display: flex; gap: 12px; }
+    .diff-col { flex: 1; min-width: 0; }
+    .diff-col-header { font-weight: bold; margin-bottom: 8px; font-size: 14px; color: #374151; }
+    .diff-scroll { max-height: 460px; overflow-y: auto; }
+    .diff-box {
+        font-family: 'Source Code Pro', 'Courier New', monospace;
+        font-size: 13px; line-height: 1.8;
+        white-space: pre-wrap; word-wrap: break-word;
+        border: 1px solid #e5e7eb; border-radius: 8px;
+        padding: 16px; color: #1a1a1a; background: #f9fafb;
+        min-height: 120px;
+    }
+    .diff-box .del { background-color: #fecaca; text-decoration: line-through; padding: 2px 4px; border-radius: 3px; color: #991b1b; }
+    .diff-box .add { background-color: #bbf7d0; font-weight: bold; padding: 2px 4px; border-radius: 3px; color: #166534; }
+    .diff-box .sub-old { background-color: #fef08a; text-decoration: line-through; padding: 2px 4px; border-radius: 3px; color: #854d0e; }
+    .diff-box .sub-new { background-color: #fef08a; font-weight: bold; padding: 2px 4px; border-radius: 3px; color: #854d0e; }
+</style>
+
+<script>
+let correctionJobs = [];
+
+function esc(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+function renderDiff(diff) {
+    let leftHtml = '', rightHtml = '';
+    for (const d of diff) {
+        switch (d.type) {
+            case 'equal':
+                leftHtml += esc(d.ref_word) + ' ';
+                rightHtml += esc(d.hyp_word) + ' ';
+                break;
+            case 'substitute':
+                leftHtml += '<span class="sub-old">' + esc(d.ref_word) + '</span> ';
+                rightHtml += '<span class="sub-new">' + esc(d.hyp_word) + '</span> ';
+                break;
+            case 'delete':
+                leftHtml += '<span class="del">' + esc(d.ref_word) + '</span> ';
+                break;
+            case 'insert':
+                rightHtml += '<span class="add">' + esc(d.hyp_word) + '</span> ';
+                break;
+        }
+    }
+    document.getElementById('diff-left').innerHTML = leftHtml;
+    document.getElementById('diff-right').innerHTML = rightHtml;
+}
+
+// Synced scrolling
+(function() {
+    let syncing = false;
+    document.addEventListener('DOMContentLoaded', function() {
+        const left = document.getElementById('scroll-left');
+        const right = document.getElementById('scroll-right');
+        left.addEventListener('scroll', function() {
+            if (syncing) return; syncing = true;
+            right.scrollTop = (left.scrollTop / (left.scrollHeight - left.clientHeight || 1)) * (right.scrollHeight - right.clientHeight || 1);
+            syncing = false;
+        });
+        right.addEventListener('scroll', function() {
+            if (syncing) return; syncing = true;
+            left.scrollTop = (right.scrollTop / (right.scrollHeight - right.clientHeight || 1)) * (left.scrollHeight - left.clientHeight || 1);
+            syncing = false;
+        });
+    });
+})();
+
+// Load correction files list on page load
+async function loadCorrectionJobs() {
+    try {
+        const res = await fetch('/api/corrections');
+        correctionJobs = await res.json();
+        const select = document.getElementById('job-select');
+        if (correctionJobs.length === 0) {
+            select.innerHTML = '<option value="">No corrections found yet — paste manually</option>';
+            return;
+        }
+        select.innerHTML = '<option value="">— Select a correction —</option>';
+        for (let i = 0; i < correctionJobs.length; i++) {
+            const job = correctionJobs[i];
+            const applied = job.corrections_applied ?? '?';
+            const attempted = job.corrections_attempted ?? '?';
+            const opt = document.createElement('option');
+            opt.value = i;
+            opt.textContent = `${job.file_id} — ${applied}/${attempted} corrections applied`;
+            select.appendChild(opt);
+        }
+    } catch (e) {
+        document.getElementById('job-select').innerHTML = '<option value="">Failed to load corrections</option>';
+    }
+}
+
+function loadSelectedJob() {
+    const idx = document.getElementById('job-select').value;
+    if (idx === '') { alert('Select a correction first'); return; }
+    const job = correctionJobs[parseInt(idx)];
+    if (!job) return;
+    document.getElementById('reference').value = job.original_text || '';
+    document.getElementById('hypothesis').value = job.enhanced_text || '';
+    runComparison();
+}
+
+async function runComparison() {
+    const btn = document.getElementById('compare-btn');
+    const status = document.getElementById('compare-status');
+    const ref = document.getElementById('reference').value;
+    const hyp = document.getElementById('hypothesis').value;
+    const termsRaw = document.getElementById('terms').value.trim();
+
+    if (!ref || !hyp) { alert('Please paste both transcripts'); return; }
+
+    btn.disabled = true;
+    status.textContent = 'Comparing...';
+
+    const body = { reference_text: ref, hypothesis_text: hyp };
+    if (termsRaw) {
+        try { body.target_terms = JSON.parse(termsRaw); }
+        catch(e) { alert('Invalid JSON for target terms'); btn.disabled = false; status.textContent = ''; return; }
+    }
+
+    try {
+        const res = await fetch('/api/evaluate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+
+        document.getElementById('results').classList.remove('hidden');
+        document.getElementById('wer-val').textContent = data.wer + '%';
+        document.getElementById('cer-val').textContent = data.cer + '%';
+        document.getElementById('sub-val').textContent = data.substitutions;
+        document.getElementById('insdel-val').textContent = data.insertions + ' / ' + data.deletions;
+
+        if (data.diff && data.diff.length > 0) {
+            renderDiff(data.diff);
+        } else {
+            document.getElementById('diff-left').textContent = ref;
+            document.getElementById('diff-right').textContent = hyp;
+        }
+
+        if (data.tter) {
+            document.getElementById('tter-section').classList.remove('hidden');
+            document.getElementById('tter-val').textContent = data.tter.overall_tter + '%';
+            document.getElementById('tter-details').innerHTML = data.tter.term_results.map(t =>
+                `<div class="flex justify-between py-1 border-b"><span>${esc(t.term)} (${esc(t.category)})</span><span>${t.errors}/${t.occurrences} errors — ${t.tter}%</span></div>`
+            ).join('');
+        } else {
+            document.getElementById('tter-section').classList.add('hidden');
+        }
+
+        document.getElementById('json-output').textContent = JSON.stringify(data, null, 2);
+        status.textContent = '';
+    } catch (e) {
+        status.textContent = 'Error: ' + e.message;
+    }
+    btn.disabled = false;
+}
+
+document.addEventListener('DOMContentLoaded', loadCorrectionJobs);
+</script>
+{% endblock %}

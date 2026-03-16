@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - ASR Correction{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">Dashboard</h1>
+
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+    <div class="bg-white rounded-lg shadow p-4">
+        <div class="text-sm text-gray-500">Correction Jobs</div>
+        <div class="text-2xl font-bold">{{ correction_count }}</div>
+    </div>
+    <div class="bg-white rounded-lg shadow p-4">
+        <div class="text-sm text-gray-500">Total Corrections Applied</div>
+        <div class="text-2xl font-bold">{{ total_corrections }}</div>
+    </div>
+    <div class="bg-white rounded-lg shadow p-4">
+        <div class="text-sm text-gray-500">Evaluation Jobs</div>
+        <div class="text-2xl font-bold">{{ eval_count }}</div>
+    </div>
+    <div class="bg-white rounded-lg shadow p-4">
+        <div class="text-sm text-gray-500">Avg Duration</div>
+        <div class="text-2xl font-bold">{{ "%.0f"|format(avg_duration_ms) }}ms</div>
+    </div>
+</div>
+
+<h2 class="text-lg font-semibold mb-3">Recent Jobs</h2>
+<div class="bg-white rounded-lg shadow overflow-hidden">
+    <table class="w-full text-sm">
+        <thead class="bg-gray-50">
+            <tr>
+                <th class="px-4 py-2 text-left">Type</th>
+                <th class="px-4 py-2 text-left">File ID</th>
+                <th class="px-4 py-2 text-left">Status</th>
+                <th class="px-4 py-2 text-left">Duration</th>
+                <th class="px-4 py-2 text-left">Created</th>
+                <th class="px-4 py-2 text-left">Result</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for job in recent_jobs %}
+            <tr class="border-t">
+                <td class="px-4 py-2">
+                    <span class="px-2 py-0.5 rounded text-xs font-medium
+                        {% if job.job_type == 'correction' %}bg-blue-100 text-blue-700
+                        {% elif job.job_type == 'evaluation' %}bg-green-100 text-green-700
+                        {% else %}bg-purple-100 text-purple-700{% endif %}">
+                        {{ job.job_type }}
+                    </span>
+                </td>
+                <td class="px-4 py-2 text-gray-500 font-mono text-xs">{{ job.file_id or '-' }}</td>
+                <td class="px-4 py-2">
+                    <span class="{% if job.status == 'completed' %}text-green-600{% elif job.status == 'failed' %}text-red-600{% else %}text-yellow-600{% endif %}">
+                        {{ job.status }}
+                    </span>
+                </td>
+                <td class="px-4 py-2">{{ "%.0f"|format(job.duration_ms or 0) }}ms</td>
+                <td class="px-4 py-2 text-gray-500">{{ job.created_at.strftime('%Y-%m-%d %H:%M') if job.created_at else '-' }}</td>
+                <td class="px-4 py-2 text-xs text-gray-500">
+                    {% if job.result_summary %}
+                        {% for k, v in job.result_summary.items() %}{{ k }}: {{ v }}{% if not loop.last %}, {% endif %}{% endfor %}
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
