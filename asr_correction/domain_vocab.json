@@ -1,0 +1,1259 @@
+{
+  "version": "1.0.0",
+  "description": "Domain vocabulary for ASR correction \u2014 deduplicated from training data",
+  "terms": [
+    {
+      "term": "Adobe Premiere",
+      "category": "product_name",
+      "known_errors": [
+        "adobe premier"
+      ]
+    },
+    {
+      "term": "AI",
+      "category": "tech_acronym",
+      "known_errors": []
+    },
+    {
+      "term": "Alice",
+      "category": "person_name",
+      "known_errors": []
+    },
+    {
+      "term": "Amazon",
+      "category": "company_name",
+      "known_errors": []
+    },
+    {
+      "term": "Andre",
+      "category": "person_name",
+      "known_errors": [
+        "Andrei",
+        "Trey",
+        "Andrea",
+        "Andrej",
+        "Andrew"
+      ]
+    },
+    {
+      "term": "Andrei",
+      "category": "person_name",
+      "known_errors": [
+        "Andre",
+        "Trey"
+      ]
+    },
+    {
+      "term": "Andrew",
+      "category": "person_name",
+      "known_errors": []
+    },
+    {
+      "term": "Android",
+      "category": "platform",
+      "known_errors": []
+    },
+    {
+      "term": "Anthropics",
+      "category": "company_name",
+      "known_errors": []
+    },
+    {
+      "term": "Antler",
+      "category": "company_name",
+      "known_errors": [
+        "antler"
+      ]
+    },
+    {
+      "term": "APAC",
+      "category": "region",
+      "known_errors": []
+    },
+    {
+      "term": "API",
+      "category": "tech_term",
+      "known_errors": []
+    },
+    {
+      "term": "Arisa",
+      "category": "person_name",
+      "known_errors": [
+        "Arissa"
+      ]
+    },
+    {
+      "term": "Arissa",
+      "category": "person_name",
+      "known_errors": [
+        "Arisa",
+        "Areesa"
+      ]
+    },
+    {
+      "term": "Arju",
+      "category": "person_name",
+      "known_errors": [
+        "Raju",
+        "Arjun"
+      ]
+    },
+    {
+      "term": "ARR",
+      "category": "business_metric",
+      "known_errors": []
+    },
+    {
+      "term": "Arvindi",
+      "category": "person_name",
+      "known_errors": [
+        "Avindi",
+        "Avindy",
+        "Wendy",
+        "Nimmi"
+      ]
+    },
+    {
+      "term": "ATLA",
+      "category": "organization",
+      "known_errors": [
+        "Adler",
+        "Atlas",
+        "Al"
+      ]
+    },
+    {
+      "term": "Atlassians",
+      "category": "company_name",
+      "known_errors": [
+        "Atlanteans"
+      ]
+    },
+    {
+      "term": "auditor",
+      "category": "domain_term",
+      "known_errors": []
+    },
+    {
+      "term": "Australia",
+      "category": "country",
+      "known_errors": []
+    },
+    {
+      "term": "AWS",
+      "category": "tech_acronym",
+      "known_errors": []
+    },
+    {
+      "term": "Azure",
+      "category": "cloud_service",
+      "known_errors": []
+    },
+    {
+      "term": "B2B",
+      "category": "business_term",
+      "known_errors": []
+    },
+    {
+      "term": "B2C",
+      "category": "business_term",
+      "known_errors": []
+    },
+    {
+      "term": "Barangaroo",
+      "category": "place_name",
+      "known_errors": [
+        "Barra",
+        "Barangaroo"
+      ]
+    },
+    {
+      "term": "Bedrock",
+      "category": "cloud_service",
+      "known_errors": []
+    },
+    {
+      "term": "Ben",
+      "category": "person_name",
+      "known_errors": []
+    },
+    {
+      "term": "Bing",
+      "category": "product_name",
+      "known_errors": []
+    },
+    {
+      "term": "Bitbucket",
+      "category": "product_name",
+      "known_errors": []
+    },
+    {
+      "term": "bootstrapped",
+      "category": "business_term",
+      "known_errors": [
+        "boost-strapped",
+        "good-strapped"
+      ]
+    },
+    {
+      "term": "Bud",
+      "category": "person_name",
+      "known_errors": [
+        "Blad",
+        "Pad",
+        "Barb",
+        "Butt",
+        "Bart"
+      ]
+    },
+    {
+      "term": "bug",
+      "category": "content_word",
+      "known_errors": [
+        "book"
+      ]
+    },
+    {
+      "term": "Bulgarian",
+      "category": "language",
+      "known_errors": []
+    },
+    {
+      "term": "CAC",
+      "category": "business_metric",
+      "known_errors": [
+        "cack",
+        "cash"
+      ]
+    },
+    {
+      "term": "Callum",
+      "category": "person_name",
+      "known_errors": [
+        "Column",
+        "Calum"
+      ]
+    },
+    {
+      "term": "canary deployment",
+      "category": "tech_term",
+      "known_errors": []
+    },
+    {
+      "term": "Canva",
+      "category": "company_name",
+      "known_errors": [
+        "canvas"
+      ]
+    },
+    {
+      "term": "certification",
+      "category": "domain_term",
+      "known_errors": []
+    },
+    {
+      "term": "ChartMogul",
+      "category": "product_name",
+      "known_errors": [
+        "ChartMobile",
+        "Chart Mogul"
+      ]
+    },
+    {
+      "term": "ChatGPT",
+      "category": "product_name",
+      "known_errors": [
+        "chat GPT"
+      ]
+    },
+    {
+      "term": "Chrome",
+      "category": "product_name",
+      "known_errors": []
+    },
+    {
+      "term": "churn",
+      "category": "business_term",
+      "known_errors": []
+    },
+    {
+      "term": "Churnkey",
+      "category": "product_name",
+      "known_errors": [
+        "Churn Key",
+        "churn key"
+      ]
+    },
+    {
+      "term": "CLI",
+      "category": "tech_term",
+      "known_errors": [
+        "CLIteWall"
+      ]
+    },
+    {
+      "term": "Cloud Compass",
+      "category": "tool_name",
+      "known_errors": []
+    },
+    {
+      "term": "Cloudflare",
+      "category": "company_name",
+      "known_errors": [
+        "Cloudware"
+      ]
+    },
+    {
+      "term": "CNAPP",
+      "category": "tech_acronym",
+      "known_errors": []
+    },
+    {
+      "term": "compliance",
+      "category": "domain_term",
+      "known_errors": []
+    },
+    {
+      "term": "Confluence",
+      "category": "product_name",
+      "known_errors": []
+    },
+    {
+      "term": "containerized",
+      "category": "tech_term",
+      "known_errors": []
+    },
+    {
+      "term": "Coviu",
+      "category": "company_name",
+      "known_errors": [
+        "COVID",
+        "Covue",
+        "Covu",
+        "Koviu"
+      ]
+    },
+    {
+      "term": "Cumulus",
+      "category": "proper_noun",
+      "known_errors": [
+        "Kumulus"
+      ]
+    },
+    {
+      "term": "Cursor",
+      "category": "product_name",
+      "known_errors": []
+    },
+    {
+      "term": "DaVinci Resolve",
+      "category": "product_name",
+      "known_errors": [
+        "Da Vinci",
+        "da vinci resolve"
+      ]
+    },
+    {
+      "term": "Dean",
+      "category": "person_name",
+      "known_errors": []
+    },
+    {
+      "term": "DeepSeek",
+      "category": "ai_model",
+      "known_errors": [
+        "DeepSeq"
+      ]
+    },
+    {
+      "term": "Deloitte",
+      "category": "company_name",
+      "known_errors": []
+    },
+    {
+      "term": "diarization",
+      "category": "tech_term",
+      "known_errors": []
+    },
+    {
+      "term": "Dilushan",
+      "category": "person_name",
+      "known_errors": [
+        "Delusion"
+      ]
+    },
+    {
+      "term": "Dimitar",
+      "category": "person_name",
+      "known_errors": [
+        "Demeter",
+        "Dinira",
+        "Dinida",
+        "Dating Eater"
+      ]
+    },
+    {
+      "term": "Dinuka",
+      "category": "person_name",
+      "known_errors": []
+    },
+    {
+      "term": "ECS",
+      "category": "tech_acronym",
+      "known_errors": []
+    },
+    {
+      "term": "Elasticsearch",
+      "category": "tech_term",
+      "known_errors": []
+    },
+    {
+      "term": "embeddings",
+      "category": "tech_term",
+      "known_errors": []
+    },
+    {
+      "term": "Erin",
+      "category": "person_name",
+      "known_errors": [
+        "Aaron",
+        "Arran"
+      ]
+    },
+    {
+      "term": "Eucalyptus",
+      "category": "company_name",
+      "known_errors": [
+        "eucalyptus"
+      ]
+    },
+    {
+      "term": "Final Cut",
+      "category": "product_name",
+      "known_errors": [
+        "final cut"
+      ]
+    },
+    {
+      "term": "Fireflies",
+      "category": "product_name",
+      "known_errors": []
+    },
+    {
+      "term": "Fireworks",
+      "category": "platform",
+      "known_errors": []
+    },
+    {
+      "term": "Flash Lite",
+      "category": "ai_model",
+      "known_errors": [
+        "Flashlight"
+      ]
+    },
+    {
+      "term": "Flutter",
+      "category": "tech_term",
+      "known_errors": []
+    },
+    {
+      "term": "Front",
+      "category": "product_name",
+      "known_errors": []
+    },
+    {
+      "term": "full text search",
+      "category": "tech_term",
+      "known_errors": []
+    },
+    {
+      "term": "G Suite",
+      "category": "product_name",
+      "known_errors": [
+        "G sweet",
+        "Gsuite"
+      ]
+    },
+    {
+      "term": "GCP",
+      "category": "tech_acronym",
+      "known_errors": []
+    },
+    {
+      "term": "GDPR",
+      "category": "compliance",
+      "known_errors": []
+    },
+    {
+      "term": "Gemini",
+      "category": "ai_model",
+      "known_errors": [
+        "Jamgai",
+        "Jamani"
+      ]
+    },
+    {
+      "term": "Gemini 2.0 Flash",
+      "category": "ai_model",
+      "known_errors": []
+    },
+    {
+      "term": "Gemini 2.5 Pro",
+      "category": "ai_model",
+      "known_errors": [
+        "GPT 2"
+      ]
+    },
+    {
+      "term": "GitLab",
+      "category": "product_name",
+      "known_errors": [
+        "Git Lab",
+        "get lab"
+      ]
+    },
+    {
+      "term": "Google Chat",
+      "category": "product_name",
+      "known_errors": []
+    },
+    {
+      "term": "Google Cloud",
+      "category": "product_name",
+      "known_errors": []
+    },
+    {
+      "term": "Google Drive",
+      "category": "product_name",
+      "known_errors": []
+    },
+    {
+      "term": "Google Gemini",
+      "category": "ai_model",
+      "known_errors": []
+    },
+    {
+      "term": "Google Meet",
+      "category": "product_name",
+      "known_errors": []
+    },
+    {
+      "term": "Groq",
+      "category": "company_name",
+      "known_errors": [
+        "GROC",
+        "Grop",
+        "Grok",
+        "Proc",
+        "CROP",
+        "block",
+        "Brock"
+      ]
+    },
+    {
+      "term": "Growth plan",
+      "category": "product_tier",
+      "known_errors": []
+    },
+    {
+      "term": "hallucinations",
+      "category": "tech_term",
+      "known_errors": []
+    },
+    {
+      "term": "HIPAA",
+      "category": "compliance",
+      "known_errors": [
+        "hipper",
+        "HIPPA"
+      ]
+    },
+    {
+      "term": "Ingram",
+      "category": "company_name",
+      "known_errors": []
+    },
+    {
+      "term": "iOS",
+      "category": "platform",
+      "known_errors": []
+    },
+    {
+      "term": "Iris",
+      "category": "person_name",
+      "known_errors": [
+        "Arissa"
+      ]
+    },
+    {
+      "term": "ISO",
+      "category": "compliance",
+      "known_errors": []
+    },
+    {
+      "term": "ISV",
+      "category": "tech_acronym",
+      "known_errors": []
+    },
+    {
+      "term": "Julien",
+      "category": "person_name",
+      "known_errors": [
+        "Julian",
+        "JoLynn",
+        "Dilun",
+        "Anjula",
+        "St. Julian"
+      ]
+    },
+    {
+      "term": "Juniper",
+      "category": "company_name",
+      "known_errors": []
+    },
+    {
+      "term": "Kieran",
+      "category": "person_name",
+      "known_errors": [
+        "Kiran",
+        "clear and"
+      ]
+    },
+    {
+      "term": "Kimi",
+      "category": "ai_model",
+      "known_errors": [
+        "Kimmy",
+        "QME",
+        "Fimi"
+      ]
+    },
+    {
+      "term": "Kimi K2",
+      "category": "ai_model",
+      "known_errors": [
+        "tbk2"
+      ]
+    },
+    {
+      "term": "knowledge base",
+      "category": "feature",
+      "known_errors": []
+    },
+    {
+      "term": "Kubernetes",
+      "category": "tech_term",
+      "known_errors": [
+        "Kubernetes phenomenon"
+      ]
+    },
+    {
+      "term": "landing page",
+      "category": "tech_term",
+      "known_errors": []
+    },
+    {
+      "term": "Leonardo AI",
+      "category": "company_name",
+      "known_errors": [
+        "Leonardo"
+      ]
+    },
+    {
+      "term": "Llama 4 Maverick",
+      "category": "ai_model",
+      "known_errors": [
+        "Lama 4 Maverick"
+      ]
+    },
+    {
+      "term": "LLM",
+      "category": "tech_term",
+      "known_errors": [
+        "LLips"
+      ]
+    },
+    {
+      "term": "LLMs",
+      "category": "tech_term",
+      "known_errors": []
+    },
+    {
+      "term": "Logan",
+      "category": "person_name",
+      "known_errors": []
+    },
+    {
+      "term": "LTV",
+      "category": "business_metric",
+      "known_errors": []
+    },
+    {
+      "term": "MAP",
+      "category": "tech_acronym",
+      "known_errors": []
+    },
+    {
+      "term": "markdown",
+      "category": "tech_term",
+      "known_errors": [
+        "mark-down"
+      ]
+    },
+    {
+      "term": "Marketplace",
+      "category": "product_name",
+      "known_errors": []
+    },
+    {
+      "term": "Martin Place",
+      "category": "place_name",
+      "known_errors": []
+    },
+    {
+      "term": "meeting bot",
+      "category": "feature",
+      "known_errors": [
+        "meeting board"
+      ]
+    },
+    {
+      "term": "meeting bots",
+      "category": "feature",
+      "known_errors": [
+        "meeting boats"
+      ]
+    },
+    {
+      "term": "Melbourne",
+      "category": "place_name",
+      "known_errors": []
+    },
+    {
+      "term": "micro tool",
+      "category": "feature",
+      "known_errors": [
+        "micro tools"
+      ]
+    },
+    {
+      "term": "Microsoft",
+      "category": "company_name",
+      "known_errors": []
+    },
+    {
+      "term": "Mimi",
+      "category": "person_name",
+      "known_errors": []
+    },
+    {
+      "term": "MKV",
+      "category": "tech_term",
+      "known_errors": [
+        "MKB"
+      ]
+    },
+    {
+      "term": "Moiz",
+      "category": "person_name",
+      "known_errors": [
+        "mui",
+        "mies",
+        "moeys"
+      ]
+    },
+    {
+      "term": "monitoring evaluation",
+      "category": "domain_term",
+      "known_errors": []
+    },
+    {
+      "term": "MR",
+      "category": "tech_term",
+      "known_errors": [
+        "Mars"
+      ]
+    },
+    {
+      "term": "MRR",
+      "category": "business_metric",
+      "known_errors": []
+    },
+    {
+      "term": "multi-cloud",
+      "category": "tech_term",
+      "known_errors": []
+    },
+    {
+      "term": "My Self-Reliance",
+      "category": "proper_noun",
+      "known_errors": [
+        "my self reliance"
+      ]
+    },
+    {
+      "term": "NDCG",
+      "category": "metric",
+      "known_errors": []
+    },
+    {
+      "term": "NextGen",
+      "category": "company_name",
+      "known_errors": []
+    },
+    {
+      "term": "Norelle",
+      "category": "person_name",
+      "known_errors": [
+        "Norell"
+      ]
+    },
+    {
+      "term": "Notion",
+      "category": "product_name",
+      "known_errors": []
+    },
+    {
+      "term": "OCR",
+      "category": "tech_term",
+      "known_errors": []
+    },
+    {
+      "term": "OpenAI",
+      "category": "company_name",
+      "known_errors": [
+        "OpenDI"
+      ]
+    },
+    {
+      "term": "Otter",
+      "category": "product_name",
+      "known_errors": []
+    },
+    {
+      "term": "Philippines",
+      "category": "country",
+      "known_errors": []
+    },
+    {
+      "term": "PostHog",
+      "category": "product_name",
+      "known_errors": [
+        "post hog",
+        "Post Hog"
+      ]
+    },
+    {
+      "term": "PR",
+      "category": "tech_term",
+      "known_errors": [
+        "fear"
+      ]
+    },
+    {
+      "term": "pre-patent",
+      "category": "domain_term",
+      "known_errors": [
+        "prepaid"
+      ]
+    },
+    {
+      "term": "Primitive Technology",
+      "category": "proper_noun",
+      "known_errors": [
+        "Primitive technology"
+      ]
+    },
+    {
+      "term": "prorated",
+      "category": "business_term",
+      "known_errors": []
+    },
+    {
+      "term": "pyannote",
+      "category": "tech_library",
+      "known_errors": [
+        "piano",
+        "Pyannode",
+        "Pyanote"
+      ]
+    },
+    {
+      "term": "Qdrant",
+      "category": "tech_term",
+      "known_errors": [
+        "quadrant",
+        "Codrent"
+      ]
+    },
+    {
+      "term": "RAG",
+      "category": "tech_term",
+      "known_errors": [
+        "Rack",
+        "rag"
+      ]
+    },
+    {
+      "term": "re-ranker",
+      "category": "tech_term",
+      "known_errors": [
+        "Reranker"
+      ]
+    },
+    {
+      "term": "ReachOut",
+      "category": "company_name",
+      "known_errors": [
+        "reach out"
+      ]
+    },
+    {
+      "term": "ring-fence",
+      "category": "domain_term",
+      "known_errors": [
+        "ring fence"
+      ]
+    },
+    {
+      "term": "Russell",
+      "category": "person_name",
+      "known_errors": [
+        "Russel"
+      ]
+    },
+    {
+      "term": "S3",
+      "category": "cloud_service",
+      "known_errors": [
+        "Spamalix"
+      ]
+    },
+    {
+      "term": "SaaS",
+      "category": "business_term",
+      "known_errors": [
+        "SAS",
+        "sass"
+      ]
+    },
+    {
+      "term": "safe notes",
+      "category": "financial_term",
+      "known_errors": [
+        "save notes"
+      ]
+    },
+    {
+      "term": "SCC",
+      "category": "tech_acronym",
+      "known_errors": []
+    },
+    {
+      "term": "ScreenApp",
+      "category": "product_name",
+      "known_errors": [
+        "Greenapp",
+        "screen app",
+        "Screenup",
+        "ScreenUp"
+      ]
+    },
+    {
+      "term": "SDK",
+      "category": "tech_term",
+      "known_errors": []
+    },
+    {
+      "term": "Security Command Center",
+      "category": "product_name",
+      "known_errors": [
+        "security command center"
+      ]
+    },
+    {
+      "term": "semantic ranker",
+      "category": "tech_term",
+      "known_errors": [
+        "Semantic Reranker",
+        "Semantic ranker"
+      ]
+    },
+    {
+      "term": "SEO",
+      "category": "tech_acronym",
+      "known_errors": []
+    },
+    {
+      "term": "Shaquille",
+      "category": "person_name",
+      "known_errors": [
+        "Shaquel",
+        "Shaquil"
+      ]
+    },
+    {
+      "term": "Sheldon",
+      "category": "person_name",
+      "known_errors": []
+    },
+    {
+      "term": "Sibi",
+      "category": "person_name",
+      "known_errors": [
+        "CD"
+      ]
+    },
+    {
+      "term": "SIP",
+      "category": "tech_term",
+      "known_errors": [
+        "sip"
+      ]
+    },
+    {
+      "term": "Slack",
+      "category": "product_name",
+      "known_errors": []
+    },
+    {
+      "term": "SOC",
+      "category": "compliance",
+      "known_errors": []
+    },
+    {
+      "term": "SOC 2",
+      "category": "compliance",
+      "known_errors": [
+        "SOC",
+        "stock 2",
+        "sock"
+      ]
+    },
+    {
+      "term": "SOPs",
+      "category": "business_term",
+      "known_errors": []
+    },
+    {
+      "term": "speech",
+      "category": "tech_term",
+      "known_errors": [
+        "speed",
+        "front speed"
+      ]
+    },
+    {
+      "term": "sprint planning",
+      "category": "tech_term",
+      "known_errors": [
+        "spring planning"
+      ]
+    },
+    {
+      "term": "Sri Lanka",
+      "category": "place_name",
+      "known_errors": [
+        "Sri lanka"
+      ]
+    },
+    {
+      "term": "SSO",
+      "category": "tech_acronym",
+      "known_errors": []
+    },
+    {
+      "term": "Stefan",
+      "category": "person_name",
+      "known_errors": [
+        "Stephen",
+        "Stephan"
+      ]
+    },
+    {
+      "term": "story point",
+      "category": "tech_term",
+      "known_errors": []
+    },
+    {
+      "term": "Stripe",
+      "category": "product_name",
+      "known_errors": []
+    },
+    {
+      "term": "subscribed",
+      "category": "content_word",
+      "known_errors": []
+    },
+    {
+      "term": "summarise",
+      "category": "feature",
+      "known_errors": [
+        "summarize"
+      ]
+    },
+    {
+      "term": "summary",
+      "category": "feature",
+      "known_errors": []
+    },
+    {
+      "term": "Sydney",
+      "category": "place_name",
+      "known_errors": []
+    },
+    {
+      "term": "Teams",
+      "category": "product_name",
+      "known_errors": [
+        "games"
+      ]
+    },
+    {
+      "term": "template",
+      "category": "feature",
+      "known_errors": []
+    },
+    {
+      "term": "The Bentley",
+      "category": "proper_noun",
+      "known_errors": []
+    },
+    {
+      "term": "Tim",
+      "category": "person_name",
+      "known_errors": []
+    },
+    {
+      "term": "transcript",
+      "category": "feature",
+      "known_errors": [
+        "transcripts"
+      ]
+    },
+    {
+      "term": "transcription",
+      "category": "feature",
+      "known_errors": []
+    },
+    {
+      "term": "Typesense",
+      "category": "tech_term",
+      "known_errors": [
+        "TypeSense",
+        "TypeScript",
+        "tag sense",
+        "type sense"
+      ]
+    },
+    {
+      "term": "VAD",
+      "category": "tech_acronym",
+      "known_errors": []
+    },
+    {
+      "term": "Vanta",
+      "category": "product_name",
+      "known_errors": [
+        "Vanter",
+        "Vonda"
+      ]
+    },
+    {
+      "term": "vector search",
+      "category": "tech_term",
+      "known_errors": [
+        "vector in text search"
+      ]
+    },
+    {
+      "term": "Vertex AI",
+      "category": "tech_term",
+      "known_errors": [
+        "vertex here in baggage",
+        "vertex AI"
+      ]
+    },
+    {
+      "term": "Vicky",
+      "category": "person_name",
+      "known_errors": [
+        "Wiki",
+        "Wicky",
+        "Riki"
+      ]
+    },
+    {
+      "term": "video analyzer",
+      "category": "feature",
+      "known_errors": [
+        "video analyser"
+      ]
+    },
+    {
+      "term": "VISO",
+      "category": "domain_term",
+      "known_errors": [
+        "Visa",
+        "viso"
+      ]
+    },
+    {
+      "term": "webhooks",
+      "category": "tech_term",
+      "known_errors": []
+    },
+    {
+      "term": "WeWork",
+      "category": "company_name",
+      "known_errors": [
+        "we work",
+        "WeWork"
+      ]
+    },
+    {
+      "term": "WhatsApp",
+      "category": "product_name",
+      "known_errors": []
+    },
+    {
+      "term": "Whisper",
+      "category": "ai_model",
+      "known_errors": []
+    },
+    {
+      "term": "Wiz",
+      "category": "company_name",
+      "known_errors": [
+        "Whiz",
+        "wish"
+      ]
+    },
+    {
+      "term": "YouTube",
+      "category": "product_name",
+      "known_errors": []
+    },
+    {
+      "term": "Zach",
+      "category": "person_name",
+      "known_errors": [
+        "Zack",
+        "Sack"
+      ]
+    },
+    {
+      "term": "Zachary",
+      "category": "person_name",
+      "known_errors": [
+        "Zachery",
+        "Zackary"
+      ]
+    },
+    {
+      "term": "Zoom",
+      "category": "product_name",
+      "known_errors": []
+    }
+  ]
+}
