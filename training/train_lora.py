@@ -20,12 +20,12 @@ class TrainingConfig:
     train_file: str = "train.jsonl"
     valid_file: str = "valid.jsonl"
     lora_rank: int = 16
-    lora_scale: float = 32.0
-    lora_dropout: float = 0.05
-    lora_layers: int = 24
+    lora_scale: float = 16.0
+    lora_dropout: float = 0.0
+    lora_layers: int = 8
     lora_keys: list = None
-    batch_size: int = 4
-    learning_rate: float = 2e-5
+    batch_size: int = 2
+    learning_rate: float = 1e-5
     iterations: int = 2000
     grad_checkpoint: bool = True
     steps_per_report: int = 10
@@ -42,6 +42,8 @@ class TrainingConfig:
 
 def train_with_mlx(config: TrainingConfig) -> dict:
     """Run LoRA fine-tuning using MLX. Returns result dict."""
+    import gc
+
     import mlx.core as mx
     from mlx_lm import load
     from mlx_lm.tuner import train as lora_train
@@ -62,6 +64,9 @@ def train_with_mlx(config: TrainingConfig) -> dict:
         valid_count = sum(1 for _ in f)
 
     logger.info("Training: %d examples, Validation: %d examples", train_count, valid_count)
+    logger.info("Config: iterations=%d, batch_size=%d, lr=%s, lora_rank=%d, lora_layers=%d",
+                config.iterations, config.batch_size, config.learning_rate,
+                config.lora_rank, config.lora_layers)
 
     # Load model
     logger.info("Loading model: %s", config.model_name)
@@ -77,6 +82,21 @@ def train_with_mlx(config: TrainingConfig) -> dict:
     )
     train_set, valid_set, _ = load_dataset(dataset_args, tokenizer)
 
+    # Wrap ChatDataset to return tokenized items (needed by iterate_batches)
+    class TokenizedDataset:
+        def __init__(self, chat_dataset):
+            self._ds = chat_dataset
+        def __len__(self):
+            return len(self._ds)
+        def __getitem__(self, idx):
+            return self._ds.process(self._ds._data[idx])
+
+    train_set = TokenizedDataset(train_set)
+    valid_set = TokenizedDataset(valid_set)
+
+    # Save checkpoints periodically to avoid losing progress
+    steps_per_save = min(500, config.iterations)
+
     # Training args (mlx-lm current API)
     adapter_file = str(config.adapter_path / "adapters.safetensors")
     training_args = TrainingArgs(
@@ -84,7 +104,7 @@ def train_with_mlx(config: TrainingConfig) -> dict:
         iters=config.iterations,
         steps_per_report=config.steps_per_report,
         steps_per_eval=config.steps_per_eval,
-        steps_per_save=config.iterations,  # Save at end
+        steps_per_save=steps_per_save,
         adapter_file=adapter_file,
         grad_checkpoint=config.grad_checkpoint,
     )
@@ -102,21 +122,45 @@ def train_with_mlx(config: TrainingConfig) -> dict:
     from mlx_lm.tuner.utils import linear_to_lora_layers
     linear_to_lora_layers(model, config.lora_layers, lora_config["lora_parameters"])
 
+    # Freeze everything, then unfreeze only LoRA params.
+    # Without this, biases/layernorm weights (float16) remain trainable
+    # and Adam optimizer updates on float16 cause NaN overflow.
+    model.freeze()
+    model.unfreeze(keys=["lora_a", "lora_b"])
+
+    from mlx.utils import tree_flatten
+    trainable = tree_flatten(model.trainable_parameters())
+    logger.info("Trainable parameters: %d (all LoRA)", len(trainable))
+
     # Create optimizer
     import mlx.optimizers as optim
     optimizer = optim.Adam(learning_rate=config.learning_rate)
 
     # Train
     config.adapter_path.mkdir(parents=True, exist_ok=True)
+    logger.info("Starting training for %d iterations (saving every %d steps)...",
+                config.iterations, steps_per_save)
     start_time = time.time()
-    lora_train(
-        model=model,
-        optimizer=optimizer,
-        train_dataset=train_set,
-        val_dataset=valid_set,
-        args=training_args,
-    )
+
+    try:
+        lora_train(
+            model=model,
+            optimizer=optimizer,
+            train_dataset=train_set,
+            val_dataset=valid_set,
+            args=training_args,
+        )
+    except KeyboardInterrupt:
+        logger.warning("Training interrupted by user at iteration. Saving current state...")
+    except Exception as e:
+        logger.error("Training failed: %s", e)
+        raise
+    finally:
+        # Always try to clean up memory
+        gc.collect()
+
     duration = time.time() - start_time
+    logger.info("Training finished in %.1f seconds (%.1f minutes)", duration, duration / 60)
 
     # Save metadata
     metadata = {
@@ -128,6 +172,8 @@ def train_with_mlx(config: TrainingConfig) -> dict:
             "learning_rate": config.learning_rate,
             "iterations": config.iterations,
             "lora_rank": config.lora_rank,
+            "lora_layers": config.lora_layers,
+            "grad_checkpoint": config.grad_checkpoint,
         },
         "data": {
             "train_examples": train_count,
@@ -135,8 +181,8 @@ def train_with_mlx(config: TrainingConfig) -> dict:
         },
     }
     metadata_path = config.adapter_path / "training_metadata.json"
-    config.adapter_path.mkdir(parents=True, exist_ok=True)
     with open(metadata_path, "w") as f:
         json.dump(metadata, f, indent=2)
+    logger.info("Metadata saved to %s", metadata_path)
 
     return metadata

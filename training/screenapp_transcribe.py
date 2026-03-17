@@ -361,15 +361,23 @@ def main():
     parser.add_argument("--audio-dir", help="Directory containing audio files (for upload mode)")
     parser.add_argument("--output", required=True, help="Output JSONL file path")
     parser.add_argument("--max-files", type=int, default=0, help="Max files to process (0=all)")
+    parser.add_argument("--limit", type=int, default=0, help="Alias for --max-files")
     parser.add_argument("--extensions", default=".wav,.flac", help="Audio file extensions (comma-separated)")
     parser.add_argument("--collect-only", action="store_true",
                         help="Skip upload, just collect transcripts for already-uploaded files")
+    parser.add_argument("--skip-existing", action="store_true",
+                        help="Skip files already present in the output JSONL")
+    parser.add_argument("--batch-size", type=int, default=20,
+                        help="Number of files to upload per batch (default: 20)")
     args = parser.parse_args()
+
+    # --limit is alias for --max-files
+    max_files = args.limit or args.max_files
 
     transcriber = ScreenAppTranscriber()
 
     if args.collect_only:
-        collect_existing_transcripts(transcriber, transcriber.folder_id, args.output, args.max_files)
+        collect_existing_transcripts(transcriber, transcriber.folder_id, args.output, max_files)
         return
 
     if not args.audio_dir:
@@ -378,19 +386,33 @@ def main():
     extensions = tuple(args.extensions.split(","))
     audio_files = find_audio_files(args.audio_dir, extensions)
 
-    if args.max_files > 0:
-        audio_files = audio_files[:args.max_files]
+    # Skip files already transcribed
+    if args.skip_existing and Path(args.output).exists():
+        existing_names = set()
+        with open(args.output) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    entry = json.loads(line)
+                    existing_names.add(entry.get("file_name", ""))
+        before = len(audio_files)
+        audio_files = [f for f in audio_files if f.name not in existing_names]
+        logger.info("Skipping %d already-transcribed files (%d remaining)",
+                     before - len(audio_files), len(audio_files))
 
-    logger.info("Found %d audio files in %s", len(audio_files), args.audio_dir)
+    if max_files > 0:
+        audio_files = audio_files[:max_files]
+
+    logger.info("Found %d audio files to process in %s", len(audio_files), args.audio_dir)
 
     if not audio_files:
-        logger.error("No audio files found")
-        sys.exit(1)
+        logger.info("No audio files to process")
+        return
 
     # Ensure output directory exists
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
 
-    transcriber.transcribe_batch(audio_files, output_path=args.output)
+    transcriber.transcribe_batch(audio_files, output_path=args.output, batch_size=args.batch_size)
 
 
 if __name__ == "__main__":
