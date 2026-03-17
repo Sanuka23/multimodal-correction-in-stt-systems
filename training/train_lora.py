@@ -22,11 +22,11 @@ class TrainingConfig:
     lora_rank: int = 16
     lora_scale: float = 32.0
     lora_dropout: float = 0.05
-    lora_layers: int = 16
+    lora_layers: int = 24
     lora_keys: list = None
-    batch_size: int = 2
+    batch_size: int = 4
     learning_rate: float = 2e-5
-    iterations: int = 1000
+    iterations: int = 2000
     grad_checkpoint: bool = True
     steps_per_report: int = 10
     steps_per_eval: int = 100
