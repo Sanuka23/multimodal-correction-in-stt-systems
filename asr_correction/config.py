@@ -50,6 +50,7 @@ class CorrectionConfig:
     avsr_mode: str = "mediapipe"  # "mediapipe", "auto_avsr", "none"
     avsr_confidence_threshold: float = 0.5
     avsr_max_segments: int = 20  # Max segments to analyze in Pass 2
+    avsr_model_dir: Optional[str] = None  # Path to auto_avsr repo (for auto_avsr mode)
 
     # Runtime
     dry_run: bool = False

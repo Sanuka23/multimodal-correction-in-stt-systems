@@ -30,8 +30,14 @@ paddlepaddle>=2.6.0
 paddleocr>=2.9.0
 opencv-python-headless>=4.9.0
 
-# AVSR (lip-reading hints)
+# AVSR (lip-reading hints — MediaPipe mode)
 mediapipe>=0.10.0
+
+# AVSR (full lip-reading — Auto-AVSR mode, optional)
+# Install via: bash scripts/setup_auto_avsr.sh
+# pytorch-lightning>=2.0.0
+# sentencepiece>=0.1.99
+# av>=10.0.0
 
 # Utilities
 python-dotenv>=1.0.0

@@ -51,7 +51,7 @@ class AVSRProvider(Protocol):
     ) -> Optional[AVSRHint]: ...
 
 
-def get_avsr_provider(mode: str = "mediapipe") -> Optional[AVSRProvider]:
+def get_avsr_provider(mode: str = "mediapipe", model_dir: str = None) -> Optional[AVSRProvider]:
     """Factory function to create the appropriate AVSR provider."""
     if mode == "mediapipe":
         from .mediapipe_hints import MediaPipeHintProvider
@@ -60,7 +60,7 @@ def get_avsr_provider(mode: str = "mediapipe") -> Optional[AVSRProvider]:
     elif mode == "auto_avsr":
         from .auto_avsr import AutoAVSRProvider
 
-        return AutoAVSRProvider()
+        return AutoAVSRProvider(model_dir=model_dir)
     elif mode == "none" or mode is None:
         return None
     else:
