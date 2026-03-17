@@ -39,6 +39,10 @@ mediapipe>=0.10.0
 # sentencepiece>=0.1.99
 # av>=10.0.0
 
+# Training data pipeline
+requests>=2.31.0
+tqdm>=4.66.0
+
 # Utilities
 python-dotenv>=1.0.0
 python-multipart>=0.0.6
