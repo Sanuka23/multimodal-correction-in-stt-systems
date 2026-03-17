@@ -24,13 +24,13 @@ class TrainingConfig:
     lora_dropout: float = 0.0
     lora_layers: int = 8
     lora_keys: list = None
-    batch_size: int = 2
+    batch_size: int = 4
     learning_rate: float = 1e-5
     iterations: int = 2000
     grad_checkpoint: bool = True
     steps_per_report: int = 10
-    steps_per_eval: int = 100
-    val_batches: int = -1
+    steps_per_eval: int = 500
+    val_batches: int = 25
     adapter_path: Path = Path("./asr_correction/adapters")
 
     def __init__(self, **kwargs):
@@ -105,6 +105,7 @@ def train_with_mlx(config: TrainingConfig) -> dict:
         steps_per_report=config.steps_per_report,
         steps_per_eval=config.steps_per_eval,
         steps_per_save=steps_per_save,
+        val_batches=config.val_batches,
         adapter_file=adapter_file,
         grad_checkpoint=config.grad_checkpoint,
     )
