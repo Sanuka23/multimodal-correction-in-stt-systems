@@ -367,6 +367,8 @@ def main():
                         help="Skip upload, just collect transcripts for already-uploaded files")
     parser.add_argument("--skip-existing", action="store_true",
                         help="Skip files already present in the output JSONL")
+    parser.add_argument("--skip-from", nargs="*", default=[],
+                        help="Additional JSONL files to check for already-transcribed files")
     parser.add_argument("--batch-size", type=int, default=20,
                         help="Number of files to upload per batch (default: 20)")
     args = parser.parse_args()
@@ -386,15 +388,18 @@ def main():
     extensions = tuple(args.extensions.split(","))
     audio_files = find_audio_files(args.audio_dir, extensions)
 
-    # Skip files already transcribed
-    if args.skip_existing and Path(args.output).exists():
+    # Skip files already transcribed (check output file + any --skip-from files)
+    if args.skip_existing:
         existing_names = set()
-        with open(args.output) as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    entry = json.loads(line)
-                    existing_names.add(entry.get("file_name", ""))
+        check_files = [args.output] + args.skip_from
+        for check_path in check_files:
+            if Path(check_path).exists():
+                with open(check_path) as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            entry = json.loads(line)
+                            existing_names.add(entry.get("file_name", ""))
         before = len(audio_files)
         audio_files = [f for f in audio_files if f.name not in existing_names]
         logger.info("Skipping %d already-transcribed files (%d remaining)",
