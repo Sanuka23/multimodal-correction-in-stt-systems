@@ -148,9 +148,14 @@ async def asr_correct(
             "samples": ocr_output_samples,
         })
 
-        # AVSR extraction
+        # Initialize AVSR provider early so we can set step status
+        from asr_correction.avsr import get_avsr_provider
+        _avsr_config = CorrectionConfig(dry_run=False)
+        avsr_provider = get_avsr_provider(_avsr_config.avsr_mode, model_dir=_avsr_config.avsr_model_dir)
+        video_url_for_avsr = request.video_url if avsr_provider else None
+
         await update_job_step(job_id, "avsr_extraction", "pending" if avsr_provider else "skipped", details={
-            "mode": config.avsr_mode if avsr_provider else "disabled",
+            "mode": _avsr_config.avsr_mode if avsr_provider else "disabled",
             "reason": "Waiting for Pass 1 to identify segments" if avsr_provider else "AVSR disabled",
         })
 
@@ -177,14 +182,6 @@ async def asr_correct(
         await update_job_step(job_id, "vocab_merge", "completed", duration_ms=vocab_duration_ms, details={
             "custom_terms": len(vocab) if vocab else 0
         })
-
-        # Initialize AVSR provider
-        from asr_correction.avsr import get_avsr_provider
-        avsr_provider = get_avsr_provider(config.avsr_mode)
-        video_url_for_avsr = request.video_url if avsr_provider else None
-
-        if avsr_provider:
-            await update_job_step(job_id, "avsr_extraction", "pending", details={"mode": config.avsr_mode})
 
         # Run correction in thread pool (blocking ML inference)
         await update_job_step(job_id, "candidate_detection", "running")

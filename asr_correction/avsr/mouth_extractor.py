@@ -101,3 +101,76 @@ def extract_segment_frames(
 
     logger.debug("Extracted %d frames from segment [%.2f-%.2f]s", len(frames), start_s, end_s)
     return frames
+
+
+def extract_video_clip(
+    video_url: str,
+    start_s: float,
+    end_s: float,
+    output_dir: str = None,
+) -> str:
+    """Extract a video clip as an MP4 file for Auto-AVSR processing.
+
+    Auto-AVSR expects 25fps video with yuv420p pixel format.
+
+    Args:
+        video_url: URL or local path to the video file.
+        start_s: Start time in seconds.
+        end_s: End time in seconds.
+        output_dir: Directory for the temp clip. If None, uses system temp.
+
+    Returns:
+        Path to the extracted .mp4 clip file.
+
+    Raises:
+        RuntimeError: If FFmpeg extraction fails.
+    """
+    duration = end_s - start_s
+    if duration <= 0:
+        raise ValueError(f"Invalid segment: start={start_s}, end={end_s}")
+
+    if output_dir is None:
+        output_dir = tempfile.mkdtemp(prefix="avsr_clip_")
+
+    clip_path = os.path.join(output_dir, "segment.mp4")
+
+    cmd = [
+        "ffmpeg",
+        "-ss", str(start_s),
+        "-i", video_url,
+        "-t", str(duration),
+        "-r", "25",                # Auto-AVSR expects 25fps
+        "-pix_fmt", "yuv420p",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-loglevel", "warning",
+        "-y",
+        clip_path,
+    ]
+
+    logger.info("Extracting video clip [%.1f-%.1fs] (%.1fs duration)",
+                start_s, end_s, duration)
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=_FFMPEG_TIMEOUT,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"FFmpeg clip extraction failed (code {result.returncode}): "
+                f"{result.stderr[:300]}"
+            )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            f"FFmpeg clip extraction timed out for [{start_s}-{end_s}]s"
+        )
+
+    if not os.path.exists(clip_path) or os.path.getsize(clip_path) == 0:
+        raise RuntimeError(f"FFmpeg produced empty clip for [{start_s}-{end_s}]s")
+
+    logger.info("Clip extracted: %s (%.1f KB)",
+                clip_path, os.path.getsize(clip_path) / 1024)
+    return clip_path
