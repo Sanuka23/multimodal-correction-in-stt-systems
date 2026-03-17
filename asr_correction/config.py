@@ -26,9 +26,17 @@ class CorrectionConfig:
     domain_vocab_path: Optional[str] = None
     custom_vocabulary: Optional[List[dict]] = None
 
-    # OCR
+    # OCR (hint extraction — used by corrector.py)
     ocr_window_seconds: float = 15.0
     max_ocr_hints: int = 15
+
+    # OCR Extraction (used by ocr_extractor.py)
+    # 30s interval — slides/dashboards rarely change faster in meetings
+    # For a 25-min video: ~50 frames → after pixel dedup ~20-30 unique
+    ocr_frame_interval_s: float = 30.0
+    ocr_max_frames: int = 100
+    ocr_min_confidence: float = 0.5
+    ocr_dedup_threshold: float = 0.9
 
     # Context
     context_window_chars: int = 80
