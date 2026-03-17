@@ -103,6 +103,7 @@ def build_prompt(
     vocab: list,
     category: str,
     ocr_hints: Optional[list] = None,
+    lip_hint: Optional[str] = None,
 ) -> str:
     """Build the user prompt matching training data format exactly."""
     prompt = (
@@ -124,7 +125,11 @@ def build_prompt(
     else:
         prompt += "OCR hints: none available\n"
 
-    prompt += "Lip reading hint: null"
+    if lip_hint:
+        prompt += f"Lip reading hint: {lip_hint}\n"
+    else:
+        prompt += "Lip reading hint: null\n"
+
     return prompt
 
 

@@ -46,6 +46,11 @@ class CorrectionConfig:
     collect_data: bool = True
     data_output_dir: Optional[str] = None
 
+    # AVSR
+    avsr_mode: str = "mediapipe"  # "mediapipe", "auto_avsr", "none"
+    avsr_confidence_threshold: float = 0.5
+    avsr_max_segments: int = 20  # Max segments to analyze in Pass 2
+
     # Runtime
     dry_run: bool = False
     backend: Optional[str] = None
