@@ -15,6 +15,7 @@
                 <th class="px-4 py-2 text-left">Created</th>
                 <th class="px-4 py-2 text-left">Result</th>
                 <th class="px-4 py-2 text-left">Error</th>
+                <th class="px-4 py-2 text-left">Pipeline</th>
             </tr>
         </thead>
         <tbody>
@@ -43,6 +44,9 @@
                     {% endif %}
                 </td>
                 <td class="px-4 py-2 text-xs text-red-500 dark:text-red-400">{{ job.error or '' }}</td>
+                <td class="px-4 py-2">
+                    <a href="/dashboard/pipeline/{{ job._id }}" class="text-blue-500 dark:text-blue-400 hover:underline text-xs">View</a>
+                </td>
             </tr>
             {% endfor %}
         </tbody>

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from ..auth import get_jwt_info
-from ..database import create_job, complete_job, fail_job, save_correction, get_cached_ocr, cache_ocr_result
+from ..database import create_job, complete_job, fail_job, save_correction, get_cached_ocr, cache_ocr_result, update_job_step
 
 logger = logging.getLogger(__name__)
 
@@ -80,10 +80,17 @@ async def asr_correct(
     )
     logger.info("Created job_id=%s for file_id=%s", job_id, request.file_id)
 
+    await update_job_step(job_id, "request_received", "completed", details={
+        "file_id": request.file_id, "segments": segment_count, "transcript_chars": len(transcript_text)
+    })
+
     try:
         # Resolve OCR data: cached XML > video URL extraction > none
         ocr_provider = None
         ocr_xml_data = request.ocr_xml
+
+        await update_job_step(job_id, "ocr_extraction", "running")
+        ocr_step_start = time.time()
 
         if ocr_xml_data:
             logger.info("OCR: Using provided ocr_xml (%d chars)", len(ocr_xml_data))
@@ -117,12 +124,44 @@ async def asr_correct(
         else:
             logger.info("OCR: No ocr_xml or video_url provided — running without OCR context")
 
+        ocr_duration_ms = (time.time() - ocr_step_start) * 1000
+
+        # Parse OCR XML to extract readable text samples for dashboard display
+        ocr_output_samples = []
+        if ocr_xml_data:
+            try:
+                from asr_correction.ocr_parser import parse_ocr_xml
+                ocr_frames = parse_ocr_xml(ocr_xml_data)
+                for frame in ocr_frames[:20]:  # Show up to 20 frames
+                    ocr_output_samples.append({
+                        "timestamp": frame.get("timestamp", ""),
+                        "text": frame.get("text", "")[:200],  # Truncate long text
+                    })
+            except Exception:
+                pass
+
+        await update_job_step(job_id, "ocr_extraction", "completed", duration_ms=ocr_duration_ms, details={
+            "has_ocr": bool(ocr_xml_data),
+            "ocr_chars": len(ocr_xml_data) if ocr_xml_data else 0,
+            "source": "provided" if request.ocr_xml else ("cached" if ocr_xml_data and not request.ocr_xml else "extracted"),
+            "frames_with_text": len(ocr_output_samples),
+            "samples": ocr_output_samples,
+        })
+
+        # AVSR extraction
+        await update_job_step(job_id, "avsr_extraction", "pending" if avsr_provider else "skipped", details={
+            "mode": config.avsr_mode if avsr_provider else "disabled",
+            "reason": "Waiting for Pass 1 to identify segments" if avsr_provider else "AVSR disabled",
+        })
+
         if ocr_xml_data:
             def ocr_callback(file_id: str, start_time: float, end_time: float):
                 return ocr_xml_data
             ocr_provider = ocr_callback
 
         # Parse custom vocabulary
+        await update_job_step(job_id, "vocab_merge", "running")
+        vocab_step_start = time.time()
         vocab = request.custom_vocabulary
         if isinstance(vocab, str):
             vocab = [v.strip() for v in vocab.split("\n") if v.strip()]
@@ -134,7 +173,22 @@ async def asr_correct(
             config.dry_run, config.confidence_threshold, config.backend or "auto",
         )
 
+        vocab_duration_ms = (time.time() - vocab_step_start) * 1000
+        await update_job_step(job_id, "vocab_merge", "completed", duration_ms=vocab_duration_ms, details={
+            "custom_terms": len(vocab) if vocab else 0
+        })
+
+        # Initialize AVSR provider
+        from asr_correction.avsr import get_avsr_provider
+        avsr_provider = get_avsr_provider(config.avsr_mode)
+        video_url_for_avsr = request.video_url if avsr_provider else None
+
+        if avsr_provider:
+            await update_job_step(job_id, "avsr_extraction", "pending", details={"mode": config.avsr_mode})
+
         # Run correction in thread pool (blocking ML inference)
+        await update_job_step(job_id, "candidate_detection", "running")
+        await update_job_step(job_id, "ml_inference", "running")
         logger.info("Starting ML correction pipeline...")
         inference_start = time.time()
 
@@ -144,12 +198,77 @@ async def asr_correct(
                 file_id=request.file_id,
                 custom_vocabulary=vocab,
                 ocr_provider=ocr_provider,
+                avsr_provider=avsr_provider,
+                video_url=video_url_for_avsr,
                 config=config,
             )
 
         enhanced, report = await _run_in_thread(_run_correction)
         inference_ms = (time.time() - inference_start) * 1000
         logger.info("ML pipeline completed in %.0fms", inference_ms)
+
+        # Build candidate list for dashboard
+        candidate_list = []
+        for r in report.results:
+            candidate_list.append({
+                "term": r.candidate.term,
+                "error": r.candidate.error_found,
+                "category": r.candidate.category,
+                "timestamp": f"{r.candidate.timestamp_start:.0f}-{r.candidate.timestamp_end:.0f}s",
+            })
+
+        await update_job_step(job_id, "candidate_detection", "completed", duration_ms=inference_ms, details={
+            "candidates_found": len(report.results),
+            "candidates": candidate_list,
+        })
+
+        # Build per-correction results for dashboard
+        inference_results = []
+        for r in report.results:
+            inference_results.append({
+                "error": r.candidate.error_found,
+                "term": r.candidate.term,
+                "status": "APPLIED" if r.applied else "SKIPPED",
+                "confidence": round(r.confidence, 2),
+                "changes": r.changes,
+                "need_lip": r.need_lip,
+                "ocr_hints": len(r.ocr_hints_used),
+            })
+
+        await update_job_step(job_id, "ml_inference", "completed", duration_ms=inference_ms, details={
+            "corrections_attempted": report.corrections_attempted,
+            "corrections_applied": report.corrections_applied,
+            "results": inference_results,
+        })
+
+        # AVSR pass 2 status
+        lip_needed = [r for r in report.results if r.need_lip or (not r.applied and r.confidence < 0.8)]
+        lip_flagged_terms = [{"error": r.candidate.error_found, "term": r.candidate.term,
+                              "confidence": round(r.confidence, 2), "need_lip": r.need_lip}
+                             for r in report.results if r.need_lip or (not r.applied and r.confidence < 0.8)]
+
+        if avsr_provider and video_url_for_avsr and lip_needed:
+            await update_job_step(job_id, "avsr_extraction", "completed", details={
+                "mode": config.avsr_mode,
+                "segments_analyzed": min(len(lip_needed), config.avsr_max_segments),
+                "flagged_segments": lip_flagged_terms[:10],
+            })
+            await update_job_step(job_id, "avsr_pass2", "completed", details={
+                "segments_reanalyzed": min(len(lip_needed), config.avsr_max_segments),
+                "flagged_segments": lip_flagged_terms[:10],
+            })
+        else:
+            if not avsr_provider:
+                await update_job_step(job_id, "avsr_extraction", "skipped", details={
+                    "mode": "disabled", "reason": "AVSR not configured",
+                })
+            elif not lip_needed:
+                await update_job_step(job_id, "avsr_extraction", "skipped", details={
+                    "mode": config.avsr_mode, "reason": "No uncertain segments — all corrections confident",
+                })
+            await update_job_step(job_id, "avsr_pass2", "skipped", details={
+                "reason": "No segments needed AVSR" if not lip_needed else "No video URL"
+            })
 
         # Build vocab_used list
         domain_vocab = load_domain_vocab(config.domain_vocab_path)
@@ -200,6 +319,8 @@ async def asr_correct(
             )
 
         # Save transcripts to dashboard database for comparison
+        await update_job_step(job_id, "apply_corrections", "running")
+        apply_step_start = time.time()
         try:
             await save_correction(
                 file_id=request.file_id,
@@ -216,7 +337,17 @@ async def asr_correct(
         except Exception as save_err:
             logger.warning("Failed to save correction to dashboard db: %s", save_err)
 
+        apply_duration_ms = (time.time() - apply_step_start) * 1000
+        await update_job_step(job_id, "apply_corrections", "completed", duration_ms=apply_duration_ms, details={
+            "corrections_applied": report.corrections_applied,
+        })
+
         duration_ms = (time.time() - start_time) * 1000
+
+        await update_job_step(job_id, "complete", "completed", duration_ms=duration_ms, details={
+            "total_time_ms": duration_ms,
+        })
+
         await complete_job(job_id, duration_ms, {
             "corrections_applied": report.corrections_applied,
             "corrections_attempted": report.corrections_attempted,

@@ -1,0 +1,411 @@
+{% extends "base.html" %}
+
+{% block title %}Pipeline — Job {{ job_id }}{% endblock %}
+
+{% block content %}
+<style>
+    /* Pulse animation for running nodes */
+    @keyframes pulse-ring {
+        0% { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.4); }
+        70% { box-shadow: 0 0 0 8px rgba(234, 179, 8, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0); }
+    }
+    .node-running { animation: pulse-ring 1.5s ease-out infinite; }
+
+    /* Arrow connectors between nodes */
+    .pipeline-node:not(:last-child)::after {
+        content: '';
+        position: absolute;
+        top: 50%;
+        right: -1.25rem;
+        width: 1.5rem;
+        height: 2px;
+        background: #6b7280;
+        transform: translateY(-50%);
+        z-index: 1;
+    }
+    .pipeline-node:not(:last-child)::before {
+        content: '';
+        position: absolute;
+        top: 50%;
+        right: -1.25rem;
+        width: 0;
+        height: 0;
+        border-top: 5px solid transparent;
+        border-bottom: 5px solid transparent;
+        border-left: 6px solid #6b7280;
+        transform: translate(100%, -50%);
+        z-index: 2;
+    }
+
+    /* Detail panel slide */
+    .detail-panel {
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.3s ease-out, opacity 0.3s ease-out;
+        opacity: 0;
+    }
+    .detail-panel.open {
+        max-height: 600px;
+        opacity: 1;
+        overflow-y: auto;
+    }
+</style>
+
+<!-- Header -->
+{% if not job %}
+<div class="text-center py-12">
+    <p class="text-gray-500 dark:text-gray-400 text-lg">Job not found: <span class="font-mono">{{ job_id }}</span></p>
+    <a href="/dashboard/jobs" class="text-blue-500 hover:underline mt-2 inline-block">Back to Jobs</a>
+</div>
+{% else %}
+<div class="mb-8">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Pipeline</h1>
+            <p class="text-sm text-gray-500 dark:text-gray-400 mt-1 font-mono">{{ job_id }}</p>
+        </div>
+        <div class="flex items-center gap-4">
+            {% set status = job.get('status', 'pending') %}
+            <span id="job-status-badge"
+                  class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium
+                         {% if status == 'completed' %}bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300
+                         {% elif status == 'running' %}bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300
+                         {% elif status == 'failed' %}bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300
+                         {% else %}bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300{% endif %}">
+                <span id="job-status-icon">
+                    {% if status == 'completed' %}&#x2705;{% elif status == 'running' %}&#x23F3;{% elif status == 'failed' %}&#x274C;{% else %}&#x2B1C;{% endif %}
+                </span>
+                <span id="job-status-text">{{ status }}</span>
+            </span>
+            <span id="job-total-time" class="text-sm text-gray-500 dark:text-gray-400">
+                {% if job.get('duration_ms') %}{{ "%.1f" | format(job.duration_ms / 1000) }}s total{% endif %}
+            </span>
+        </div>
+    </div>
+</div>
+
+<!-- Horizontal Pipeline Flow -->
+<div class="overflow-x-auto pb-4">
+    <div id="pipeline-nodes" class="flex flex-wrap lg:flex-nowrap items-center gap-x-8 gap-y-4 min-w-max px-2 py-4">
+        {% for step in job.get('pipeline_steps', []) %}
+        <div class="pipeline-node relative flex-shrink-0 cursor-pointer"
+             data-step-index="{{ loop.index0 }}"
+             onclick="toggleDetail({{ loop.index0 }})">
+            <div id="node-{{ loop.index0 }}"
+                 class="w-44 rounded-xl border-2 p-4 transition-all duration-200 select-none
+                        {% if step.status == 'completed' %}
+                            border-green-400 dark:border-green-500 bg-green-50 dark:bg-green-900/20
+                        {% elif step.status == 'running' %}
+                            border-yellow-400 dark:border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20 node-running
+                        {% elif step.status == 'failed' %}
+                            border-red-400 dark:border-red-500 bg-red-50 dark:bg-red-900/20
+                        {% elif step.status == 'skipped' %}
+                            border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/40 opacity-50
+                        {% else %}
+                            border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800
+                        {% endif %}
+                        hover:shadow-lg dark:hover:shadow-gray-900/50">
+                <!-- Status Icon -->
+                <div class="text-xl mb-2" id="node-icon-{{ loop.index0 }}">
+                    {% if step.status == 'completed' %}&#x2705;
+                    {% elif step.status == 'running' %}&#x23F3;
+                    {% elif step.status == 'failed' %}&#x274C;
+                    {% elif step.status == 'skipped' %}&#x2298;
+                    {% else %}&#x2B1C;{% endif %}
+                </div>
+                <!-- Step Name -->
+                <div class="text-sm font-semibold text-gray-900 dark:text-white truncate" title="{{ step.name }}">
+                    {{ step.name }}
+                </div>
+                <!-- Duration -->
+                <div class="text-xs text-gray-500 dark:text-gray-400 mt-1" id="node-duration-{{ loop.index0 }}">
+                    {% if step.duration_ms %}{{ "%.1f" | format(step.duration_ms / 1000) }}s{% else %}&mdash;{% endif %}
+                </div>
+                <!-- Summary -->
+                <div class="text-xs text-gray-400 dark:text-gray-500 mt-1 truncate" id="node-summary-{{ loop.index0 }}">
+                    {% if step.details %}
+                        {% for k, v in step.details.items() %}{% if loop.index <= 2 %}{{ k }}: {{ v }}{% if not loop.last and loop.index < 2 %}, {% endif %}{% endif %}{% endfor %}
+                    {% else %}&nbsp;{% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Expandable Detail Panel -->
+<div id="detail-panel" class="detail-panel mt-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+    <div class="p-6">
+        <div class="flex items-center justify-between mb-4">
+            <h3 id="detail-title" class="text-lg font-semibold text-gray-900 dark:text-white"></h3>
+            <button onclick="closeDetail()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4 text-sm">
+            <div>
+                <span class="text-gray-500 dark:text-gray-400">Status:</span>
+                <span id="detail-status" class="ml-1 font-medium"></span>
+            </div>
+            <div>
+                <span class="text-gray-500 dark:text-gray-400">Duration:</span>
+                <span id="detail-duration" class="ml-1 font-medium"></span>
+            </div>
+            <div>
+                <span class="text-gray-500 dark:text-gray-400">Updated:</span>
+                <span id="detail-updated" class="ml-1 font-medium"></span>
+            </div>
+        </div>
+        <div>
+            <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">Details</h4>
+            <pre id="detail-json" class="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-4 text-xs text-gray-800 dark:text-gray-200 overflow-x-auto whitespace-pre-wrap max-h-80 overflow-y-auto font-mono"></pre>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Steps data from server
+    let stepsData = {{ job.pipeline_steps | tojson }};
+    const jobId = "{{ job_id }}";
+    let jobStatus = "{{ job.status | default('pending') }}";
+    let activeDetailIndex = -1;
+    let pollTimer = null;
+
+    // Status config
+    const STATUS_CONFIG = {
+        completed: { icon: '\u2705', border: 'border-green-400 dark:border-green-500', bg: 'bg-green-50 dark:bg-green-900/20', extra: '' },
+        running:   { icon: '\u23F3', border: 'border-yellow-400 dark:border-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-900/20', extra: 'node-running' },
+        failed:    { icon: '\u274C', border: 'border-red-400 dark:border-red-500', bg: 'bg-red-50 dark:bg-red-900/20', extra: '' },
+        skipped:   { icon: '\u2298', border: 'border-gray-300 dark:border-gray-600', bg: 'bg-gray-50 dark:bg-gray-800/40', extra: 'opacity-50' },
+        pending:   { icon: '\u2B1C', border: 'border-gray-300 dark:border-gray-600', bg: 'bg-white dark:bg-gray-800', extra: '' }
+    };
+
+    function formatDuration(ms) {
+        if (ms === null || ms === undefined) return '\u2014';
+        return (ms / 1000).toFixed(1) + 's';
+    }
+
+    function summarize(details) {
+        if (!details) return '\u00A0';
+        if (typeof details === 'object') {
+            const vals = Object.values(details);
+            if (vals.length > 0) {
+                const first = String(vals[0]);
+                return first.length > 40 ? first.slice(0, 37) + '...' : first;
+            }
+            return '\u00A0';
+        }
+        const s = String(details);
+        return s.length > 40 ? s.slice(0, 37) + '...' : s;
+    }
+
+    function createNode(index, step) {
+        const container = document.getElementById('pipeline-nodes');
+        const status = step.status || 'pending';
+        const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.pending;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'pipeline-node relative flex-shrink-0 cursor-pointer';
+        wrapper.setAttribute('data-step-index', index);
+        wrapper.onclick = function() { toggleDetail(index); };
+
+        wrapper.innerHTML = `
+            <div id="node-${index}"
+                 class="w-44 rounded-xl border-2 p-4 transition-all duration-200 select-none hover:shadow-lg dark:hover:shadow-gray-900/50 ${cfg.border} ${cfg.bg} ${cfg.extra}">
+                <div class="text-xl mb-2" id="node-icon-${index}">${cfg.icon}</div>
+                <div class="text-sm font-semibold text-gray-900 dark:text-white truncate" title="${step.name}">${step.name}</div>
+                <div class="text-xs text-gray-500 dark:text-gray-400 mt-1" id="node-duration-${index}">${formatDuration(step.duration_ms)}</div>
+                <div class="text-xs text-gray-400 dark:text-gray-500 mt-1 truncate" id="node-summary-${index}">${summarize(step.details)}</div>
+            </div>`;
+        container.appendChild(wrapper);
+    }
+
+    function updateNode(index, step) {
+        const node = document.getElementById('node-' + index);
+        if (!node) {
+            createNode(index, step);
+            return;
+        }
+
+        const status = step.status || 'pending';
+        const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.pending;
+
+        // Reset classes
+        node.className = 'w-44 rounded-xl border-2 p-4 transition-all duration-200 select-none hover:shadow-lg dark:hover:shadow-gray-900/50 '
+            + cfg.border + ' ' + cfg.bg + ' ' + cfg.extra;
+
+        document.getElementById('node-icon-' + index).textContent = cfg.icon;
+        document.getElementById('node-duration-' + index).textContent = formatDuration(step.duration_ms);
+        document.getElementById('node-summary-' + index).textContent = summarize(step.details);
+    }
+
+    function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+    function renderStepDetails(name, details) {
+        // OCR extraction — show extracted text per frame
+        if (name === 'ocr_extraction' && details.samples && details.samples.length > 0) {
+            let html = `<div class="mb-3 text-sm"><strong>Source:</strong> ${esc(details.source || '?')} | <strong>Frames with text:</strong> ${details.frames_with_text || 0} | <strong>Total chars:</strong> ${details.ocr_chars || 0}</div>`;
+            html += '<div class="space-y-2 max-h-96 overflow-y-auto">';
+            for (const s of details.samples) {
+                html += `<div class="border border-gray-200 dark:border-gray-700 rounded p-2">
+                    <span class="text-xs font-mono text-blue-500 dark:text-blue-400">${esc(s.timestamp)}</span>
+                    <div class="text-xs text-gray-700 dark:text-gray-300 mt-1 whitespace-pre-wrap">${esc(s.text)}</div>
+                </div>`;
+            }
+            html += '</div>';
+            return html;
+        }
+
+        // Candidate detection — show candidate list
+        if (name === 'candidate_detection' && details.candidates && details.candidates.length > 0) {
+            let html = `<div class="mb-3 text-sm"><strong>Candidates found:</strong> ${details.candidates_found}</div>`;
+            html += '<table class="w-full text-xs"><thead class="text-left"><tr><th class="pb-1">Error</th><th class="pb-1">Target</th><th class="pb-1">Category</th><th class="pb-1">Time</th></tr></thead><tbody>';
+            for (const c of details.candidates) {
+                html += `<tr class="border-t border-gray-200 dark:border-gray-700">
+                    <td class="py-1 text-red-500 dark:text-red-400 font-mono">${esc(c.error)}</td>
+                    <td class="py-1 text-green-600 dark:text-green-400 font-mono font-bold">${esc(c.term)}</td>
+                    <td class="py-1"><span class="px-1 py-0.5 bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 rounded text-xs">${esc(c.category)}</span></td>
+                    <td class="py-1 text-gray-400">${esc(c.timestamp)}</td>
+                </tr>`;
+            }
+            html += '</tbody></table>';
+            return html;
+        }
+
+        // ML inference — show per-correction results
+        if (name === 'ml_inference' && details.results && details.results.length > 0) {
+            let html = `<div class="mb-3 text-sm"><strong>Applied:</strong> <span class="text-green-600 dark:text-green-400 font-bold">${details.corrections_applied}</span> / ${details.corrections_attempted}</div>`;
+            html += '<table class="w-full text-xs"><thead class="text-left"><tr><th class="pb-1">Status</th><th class="pb-1">Error</th><th class="pb-1">Target</th><th class="pb-1">Conf</th><th class="pb-1">OCR</th><th class="pb-1">Lip?</th></tr></thead><tbody>';
+            for (const r of details.results) {
+                const statusBadge = r.status === 'APPLIED'
+                    ? '<span class="px-1 py-0.5 bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 rounded">APPLIED</span>'
+                    : '<span class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded">SKIP</span>';
+                const confColor = r.confidence >= 0.8 ? 'text-green-600 dark:text-green-400' : r.confidence >= 0.5 ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-500';
+                html += `<tr class="border-t border-gray-200 dark:border-gray-700">
+                    <td class="py-1">${statusBadge}</td>
+                    <td class="py-1 font-mono text-red-500 dark:text-red-400">${esc(r.error)}</td>
+                    <td class="py-1 font-mono text-green-600 dark:text-green-400 font-bold">${esc(r.term)}</td>
+                    <td class="py-1 ${confColor} font-bold">${(r.confidence * 100).toFixed(0)}%</td>
+                    <td class="py-1 text-blue-500">${r.ocr_hints > 0 ? r.ocr_hints + ' hints' : '-'}</td>
+                    <td class="py-1">${r.need_lip ? '🔴 Yes' : '-'}</td>
+                </tr>`;
+            }
+            html += '</tbody></table>';
+            return html;
+        }
+
+        // AVSR — show flagged segments
+        if ((name === 'avsr_extraction' || name === 'avsr_pass2') && details.flagged_segments && details.flagged_segments.length > 0) {
+            let html = `<div class="mb-3 text-sm"><strong>Mode:</strong> ${esc(details.mode || '?')} | <strong>Segments:</strong> ${details.segments_analyzed || 0}</div>`;
+            html += '<table class="w-full text-xs"><thead class="text-left"><tr><th class="pb-1">Error</th><th class="pb-1">Target</th><th class="pb-1">Conf</th><th class="pb-1">Lip Flag</th></tr></thead><tbody>';
+            for (const s of details.flagged_segments) {
+                html += `<tr class="border-t border-gray-200 dark:border-gray-700">
+                    <td class="py-1 font-mono text-red-500 dark:text-red-400">${esc(s.error)}</td>
+                    <td class="py-1 font-mono text-green-600 dark:text-green-400">${esc(s.term)}</td>
+                    <td class="py-1">${(s.confidence * 100).toFixed(0)}%</td>
+                    <td class="py-1">${s.need_lip ? '🔴 Yes' : 'No'}</td>
+                </tr>`;
+            }
+            html += '</tbody></table>';
+            return html;
+        }
+
+        // Default: pretty JSON
+        return '<pre class="text-xs whitespace-pre-wrap">' + esc(JSON.stringify(details, null, 2)) + '</pre>';
+    }
+
+    function toggleDetail(index) {
+        const panel = document.getElementById('detail-panel');
+        if (activeDetailIndex === index) {
+            closeDetail();
+            return;
+        }
+        activeDetailIndex = index;
+        const step = stepsData[index];
+        if (!step) return;
+
+        document.getElementById('detail-title').textContent = step.name;
+        document.getElementById('detail-status').textContent = step.status || 'pending';
+        document.getElementById('detail-duration').textContent = formatDuration(step.duration_ms);
+        document.getElementById('detail-updated').textContent = step.updated_at || '\u2014';
+        // Render rich detail view based on step type
+        const detailEl = document.getElementById('detail-json');
+        if (step.details) {
+            detailEl.innerHTML = renderStepDetails(step.name, step.details);
+        } else {
+            detailEl.textContent = 'No details available.';
+        }
+
+        panel.classList.add('open');
+    }
+
+    function closeDetail() {
+        document.getElementById('detail-panel').classList.remove('open');
+        activeDetailIndex = -1;
+    }
+
+    // Polling
+    async function pollSteps() {
+        try {
+            const resp = await fetch('/api/jobs/' + jobId + '/steps');
+            if (!resp.ok) return;
+            const data = await resp.json();
+
+            // Update job-level status if provided
+            if (data.status) {
+                jobStatus = data.status;
+                const badge = document.getElementById('job-status-badge');
+                const statusText = document.getElementById('job-status-text');
+                const statusIcon = document.getElementById('job-status-icon');
+                statusText.textContent = jobStatus;
+                const iconMap = { completed: '\u2705', running: '\u23F3', failed: '\u274C', pending: '\u2B1C' };
+                statusIcon.textContent = iconMap[jobStatus] || '\u2B1C';
+
+                badge.className = 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium ';
+                if (jobStatus === 'completed') badge.className += 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300';
+                else if (jobStatus === 'running') badge.className += 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300';
+                else if (jobStatus === 'failed') badge.className += 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300';
+                else badge.className += 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
+            }
+
+            if (data.total_time_ms !== undefined) {
+                document.getElementById('job-total-time').textContent = (data.total_time_ms / 1000).toFixed(1) + 's total';
+            }
+
+            // Update steps
+            const steps = data.steps || data.pipeline_steps || data;
+            if (Array.isArray(steps)) {
+                stepsData = steps;
+                steps.forEach((step, i) => updateNode(i, step));
+
+                // Refresh open detail panel
+                if (activeDetailIndex >= 0 && activeDetailIndex < steps.length) {
+                    const step = steps[activeDetailIndex];
+                    document.getElementById('detail-status').textContent = step.status || 'pending';
+                    document.getElementById('detail-duration').textContent = formatDuration(step.duration_ms);
+                    document.getElementById('detail-updated').textContent = step.updated_at || '\u2014';
+                    document.getElementById('detail-json').innerHTML = step.details
+                        ? renderStepDetails(step.name, step.details)
+                        : 'No details available.';
+                }
+            }
+        } catch (e) {
+            console.warn('Poll error:', e);
+        }
+
+        // Continue polling only while running
+        if (jobStatus === 'running') {
+            pollTimer = setTimeout(pollSteps, 2000);
+        }
+    }
+
+    // Start polling if job is running
+    if (jobStatus === 'running') {
+        pollTimer = setTimeout(pollSteps, 2000);
+    }
+</script>
+{% endif %}
+{% endblock %}

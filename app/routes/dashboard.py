@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, Request
 from fastapi.templating import Jinja2Templates
 
-from ..database import list_jobs
+from ..database import list_jobs, get_job_with_steps
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 templates = Jinja2Templates(directory=str(PROJECT_ROOT / "templates"))
@@ -56,6 +56,32 @@ async def jobs_page(request: Request):
     """Full job history table."""
     jobs = await list_jobs(limit=100)
     return templates.TemplateResponse("jobs.html", {"request": request, "jobs": jobs})
+
+
+@router.get("/dashboard/pipeline/{job_id}")
+async def pipeline_page(request: Request, job_id: str):
+    """Pipeline workflow visualization for a specific job."""
+    job = await get_job_with_steps(job_id)
+    if not job:
+        return templates.TemplateResponse("pipeline.html", {
+            "request": request, "job": None, "job_id": job_id
+        })
+    return templates.TemplateResponse("pipeline.html", {
+        "request": request, "job": job, "job_id": job_id
+    })
+
+
+@router.get("/api/jobs/{job_id}/steps")
+async def get_job_steps(job_id: str):
+    """API endpoint for polling pipeline step progress."""
+    job = await get_job_with_steps(job_id)
+    if not job:
+        return {"error": "Job not found"}
+    return {
+        "job_id": job_id,
+        "status": job.get("status"),
+        "pipeline_steps": job.get("pipeline_steps", []),
+    }
 
 
 @router.get("/dashboard/training")

@@ -64,6 +64,7 @@ async def create_job(job_type: str, file_id: str = None, input_summary: dict = N
         "input_summary": input_summary or {},
         "result_summary": {},
         "error": None,
+        "pipeline_steps": [],
     }
     result = await db[JOBS_COLLECTION].insert_one(doc)
     return str(result.inserted_id)
@@ -154,6 +155,52 @@ async def cache_ocr_result(file_id: str, ocr_xml: str) -> None:
         }},
         upsert=True,
     )
+
+
+async def update_job_step(job_id: str, step_name: str, status: str,
+                          duration_ms: float = None, details: dict = None) -> None:
+    """Update a pipeline step within a job. Creates the step if it doesn't exist."""
+    from bson import ObjectId
+    db = get_dashboard_db()
+    step = {
+        "name": step_name,
+        "status": status,  # "pending", "running", "completed", "failed", "skipped"
+        "duration_ms": duration_ms,
+        "details": details or {},
+        "updated_at": datetime.now(timezone.utc),
+    }
+    # Use $set on the specific array element matched by name, or $push if new
+    result = await db[JOBS_COLLECTION].update_one(
+        {"_id": ObjectId(job_id), "pipeline_steps.name": step_name},
+        {"$set": {"pipeline_steps.$": step}},
+    )
+    if result.matched_count == 0:
+        # Step doesn't exist yet, push it
+        await db[JOBS_COLLECTION].update_one(
+            {"_id": ObjectId(job_id)},
+            {"$push": {"pipeline_steps": step}},
+        )
+
+
+async def get_job_with_steps(job_id: str) -> dict:
+    """Get a job document including its pipeline_steps array.
+
+    Converts all datetime objects to ISO strings for JSON serialization.
+    """
+    from bson import ObjectId
+    db = get_dashboard_db()
+    doc = await db[JOBS_COLLECTION].find_one({"_id": ObjectId(job_id)})
+    if doc:
+        doc["_id"] = str(doc["_id"])
+        # Convert datetime objects to strings for JSON/Jinja2 tojson compatibility
+        for step in doc.get("pipeline_steps", []):
+            if isinstance(step.get("updated_at"), datetime):
+                step["updated_at"] = step["updated_at"].isoformat()
+        if isinstance(doc.get("created_at"), datetime):
+            doc["created_at"] = doc["created_at"].isoformat()
+        if isinstance(doc.get("completed_at"), datetime):
+            doc["completed_at"] = doc["completed_at"].isoformat()
+    return doc
 
 
 async def list_corrections(limit: int = 50) -> list:
