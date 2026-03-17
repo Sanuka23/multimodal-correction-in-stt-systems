@@ -158,11 +158,7 @@ async def cache_ocr_result(file_id: str, ocr_xml: str) -> None:
 
 async def list_corrections(limit: int = 50) -> list:
     db = get_dashboard_db()
-    cursor = db[CORRECTIONS_COLLECTION].find(
-        {},
-        {"original_text": 1, "enhanced_text": 1, "file_id": 1, "created_at": 1,
-         "corrections_applied": 1, "corrections_attempted": 1},
-    ).sort("created_at", -1).limit(limit)
+    cursor = db[CORRECTIONS_COLLECTION].find({}).sort("created_at", -1).limit(limit)
     results = []
     async for doc in cursor:
         doc["_id"] = str(doc["_id"])

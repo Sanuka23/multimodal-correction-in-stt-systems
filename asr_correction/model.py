@@ -105,14 +105,27 @@ def build_prompt(
     ocr_hints: Optional[list] = None,
 ) -> str:
     """Build the user prompt matching training data format exactly."""
-    return (
-        "Correct this ASR transcript segment using the provided context.\n\n"
+    prompt = (
+        "Correct this ASR transcript segment using the provided context.\n"
+        "IMPORTANT: Only change words that are clearly wrong. If a word is "
+        "already correct, do NOT change it. Use OCR screen text to verify "
+        "the correct spelling of domain terms.\n\n"
         f"ASR transcript: {asr_text}\n"
         f"Custom vocabulary: {json.dumps(vocab)}\n"
         f"Category: {category}\n"
-        f"OCR hints: {json.dumps(ocr_hints or [])}\n"
-        "Lip reading hint: null"
     )
+
+    if ocr_hints:
+        prompt += (
+            f"Screen text (OCR from slides/UI visible during this segment):\n"
+            f"  {chr(10).join('- ' + h for h in ocr_hints)}\n"
+            "Use these screen terms to verify correct spellings.\n"
+        )
+    else:
+        prompt += "OCR hints: none available\n"
+
+    prompt += "Lip reading hint: null"
+    return prompt
 
 
 def run_inference(
@@ -126,13 +139,21 @@ def run_inference(
 
     Returns dict with: corrected, changes, confidence, need_lip
     """
+    import time as _time
+
     if model is None or tokenizer is None:
+        logger.warning("Model/tokenizer is None — returning fallback response")
         return _fallback_response()
+
+    logger.info("Running inference (backend=%s, max_tokens=%d)", _backend, max_tokens)
+    logger.debug("Prompt: %s", prompt[:200])
 
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": prompt},
     ]
+
+    t0 = _time.time()
 
     if _backend == "mlx":
         from mlx_lm import generate
@@ -158,7 +179,14 @@ def run_inference(
     else:
         return _fallback_response()
 
-    return _parse_response(response)
+    inference_ms = (_time.time() - t0) * 1000
+    logger.info("Inference completed in %.0fms", inference_ms)
+    logger.info("Raw model response: %s", response[:500] if response else "(empty)")
+
+    result = _parse_response(response)
+    logger.info("Parsed result: confidence=%.2f, changes=%s, need_lip=%s",
+                result.get("confidence", 0), result.get("changes", []), result.get("need_lip", False))
+    return result
 
 
 def _parse_response(response: str) -> dict:

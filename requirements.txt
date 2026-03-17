@@ -25,6 +25,11 @@ mlx-lm>=0.12.0; sys_platform == "darwin" and platform_machine == "arm64"
 # peft>=0.10.0
 # torch>=2.2.0
 
+# Video OCR extraction
+paddlepaddle>=2.6.0
+paddleocr>=2.9.0
+opencv-python-headless>=4.9.0
+
 # Utilities
 python-dotenv>=1.0.0
 python-multipart>=0.0.6

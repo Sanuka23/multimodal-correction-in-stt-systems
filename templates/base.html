@@ -1,22 +1,61 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}ASR Correction{% endblock %}</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { darkMode: 'class' };
+    </script>
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        /* Theme transition */
+        html { transition: background-color 0.2s, color 0.2s; }
+        /* Scrollbar dark mode */
+        .dark ::-webkit-scrollbar { width: 8px; }
+        .dark ::-webkit-scrollbar-track { background: #1f2937; }
+        .dark ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+    </style>
+    <script>
+        // Persist theme preference
+        (function() {
+            const saved = localStorage.getItem('theme');
+            if (saved === 'light') {
+                document.documentElement.classList.remove('dark');
+            } else {
+                document.documentElement.classList.add('dark');
+            }
+        })();
+        function toggleTheme() {
+            const html = document.documentElement;
+            html.classList.toggle('dark');
+            localStorage.setItem('theme', html.classList.contains('dark') ? 'dark' : 'light');
+            // Update plotly charts if any
+            if (window.updatePlotlyTheme) window.updatePlotlyTheme();
+        }
+    </script>
 </head>
-<body class="bg-gray-50 min-h-screen">
-    <nav class="bg-white border-b border-gray-200 px-6 py-3">
+<body class="bg-gray-50 dark:bg-gray-900 min-h-screen text-gray-900 dark:text-gray-100 transition-colors">
+    <nav class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-3">
         <div class="flex items-center justify-between max-w-7xl mx-auto">
-            <a href="/dashboard" class="text-lg font-semibold text-gray-900">ASR Correction</a>
-            <div class="flex gap-4 text-sm">
-                <a href="/dashboard" class="text-gray-600 hover:text-gray-900">Dashboard</a>
-                <a href="/dashboard/compare" class="text-gray-600 hover:text-gray-900">Compare</a>
-                <a href="/dashboard/jobs" class="text-gray-600 hover:text-gray-900">Jobs</a>
-                <a href="/dashboard/training" class="text-gray-600 hover:text-gray-900">Training</a>
-                <a href="/docs" class="text-gray-600 hover:text-gray-900">API Docs</a>
+            <a href="/dashboard" class="text-lg font-semibold text-gray-900 dark:text-white">ASR Correction</a>
+            <div class="flex items-center gap-4 text-sm">
+                <a href="/dashboard" class="text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white">Dashboard</a>
+                <a href="/dashboard/compare" class="text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white">Compare</a>
+                <a href="/dashboard/jobs" class="text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white">Jobs</a>
+                <a href="/dashboard/training" class="text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white">Training</a>
+                <a href="/docs" class="text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white">API Docs</a>
+                <button onclick="toggleTheme()" class="ml-2 p-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors" title="Toggle theme">
+                    <!-- Sun icon (shown in dark mode) -->
+                    <svg class="w-4 h-4 hidden dark:block text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"/>
+                    </svg>
+                    <!-- Moon icon (shown in light mode) -->
+                    <svg class="w-4 h-4 block dark:hidden text-gray-600" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/>
+                    </svg>
+                </button>
             </div>
         </div>
     </nav>

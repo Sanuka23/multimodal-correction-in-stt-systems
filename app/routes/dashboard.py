@@ -20,9 +20,14 @@ async def dashboard_home(request: Request):
     correction_jobs = [j for j in recent_jobs if j["job_type"] == "correction"]
     eval_jobs = [j for j in recent_jobs if j["job_type"] == "evaluation"]
 
+    completed_corrections = [j for j in correction_jobs if j["status"] == "completed"]
     total_corrections = sum(
         j.get("result_summary", {}).get("corrections_applied", 0)
-        for j in correction_jobs if j["status"] == "completed"
+        for j in completed_corrections
+    )
+    total_attempted = sum(
+        j.get("result_summary", {}).get("corrections_attempted", 0)
+        for j in completed_corrections
     )
     avg_duration = 0
     completed = [j for j in correction_jobs if j.get("duration_ms")]
@@ -33,6 +38,7 @@ async def dashboard_home(request: Request):
         "request": request,
         "recent_jobs": recent_jobs[:10],
         "total_corrections": total_corrections,
+        "total_attempted": total_attempted,
         "correction_count": len(correction_jobs),
         "eval_count": len(eval_jobs),
         "avg_duration_ms": round(avg_duration, 1),

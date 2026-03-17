@@ -15,6 +15,8 @@ Usage:
     )
 """
 
+import logging
+
 from .config import CorrectionConfig
 from .corrector import correct_candidates, identify_candidates
 from .data_collector import collect_correction_data
@@ -22,6 +24,8 @@ from .types import CorrectionReport
 from .vocabulary import load_domain_vocab, merge_vocabularies
 
 __version__ = "1.0.0"
+
+logger = logging.getLogger(__name__)
 
 
 def correct_transcript(
@@ -65,11 +69,15 @@ def correct_transcript(
     # Step 1: Merge vocabularies
     domain_vocab = load_domain_vocab(config.domain_vocab_path)
     vocab_terms = merge_vocabularies(custom_vocabulary, domain_vocab)
+    logger.info("Step 1: Merged %d domain + %d custom → %d vocab terms",
+                len(domain_vocab), len(custom_vocabulary or []), len(vocab_terms))
 
     # Step 2: Identify correction candidates
     candidates = identify_candidates(transcript, vocab_terms, config)
+    logger.info("Step 2: Found %d correction candidates in transcript", len(candidates))
 
     if not candidates:
+        logger.info("No candidates found — returning original transcript unchanged")
         report = CorrectionReport(
             file_id=file_id,
             corrections_attempted=0,
@@ -79,13 +87,22 @@ def correct_transcript(
         )
         return transcript, report
 
+    for i, c in enumerate(candidates):
+        logger.info("  Candidate %d: '%s' (error='%s', category='%s', pos=%d, ts=%.1f-%.1f)",
+                     i + 1, c.term, c.error_found, c.category, c.char_position,
+                     c.timestamp_start, c.timestamp_end)
+
     # Step 3: Correct candidates
+    logger.info("Step 3: Running correction on %d candidates (dry_run=%s)...", len(candidates), config.dry_run)
     enhanced, report = correct_candidates(
         candidates, transcript, file_id, ocr_provider, config
     )
+    logger.info("Step 3 complete: %d/%d corrections applied in %.0fms",
+                report.corrections_applied, report.corrections_attempted, report.processing_time_ms)
 
     # Step 4: Collect data for future training
     if config.collect_data and report.results:
+        logger.info("Step 4: Collecting %d results for training data", len(report.results))
         collect_correction_data(
             report.results, config.system_prompt, config.data_output_dir
         )

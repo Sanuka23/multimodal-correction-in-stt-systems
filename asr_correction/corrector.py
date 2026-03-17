@@ -123,6 +123,7 @@ def correct_candidates(
 
     results: List[CorrectionResult] = []
     corrected_text = transcript.get("text", "")
+    corrected_segments = [dict(s) for s in transcript.get("segments", [])]
     applied_count = 0
 
     # Process candidates in reverse char-position order to preserve offsets
@@ -130,12 +131,18 @@ def correct_candidates(
         candidates, key=lambda c: c.char_position, reverse=True
     )
 
-    for candidate in sorted_candidates:
+    for idx, candidate in enumerate(sorted_candidates):
+        logger.info("--- Processing candidate %d/%d: '%s' (error='%s') ---",
+                     idx + 1, len(sorted_candidates), candidate.term, candidate.error_found)
+
         # Step 1: Get OCR hints
         ocr_hints = _fetch_ocr_hints(candidate, file_id, ocr_provider, config)
+        logger.info("  OCR hints: %d hints fetched %s",
+                     len(ocr_hints), ocr_hints[:3] if ocr_hints else "[]")
 
         # Step 2: Build prompt and run inference
         if config.dry_run:
+            logger.info("  Mode: dry-run (rule-based)")
             result_data = _dry_run_correction(candidate)
         else:
             prompt = build_prompt(
@@ -144,6 +151,7 @@ def correct_candidates(
                 candidate.category,
                 ocr_hints,
             )
+            logger.info("  Mode: ML inference")
             result_data = run_inference(
                 prompt, config.system_prompt, model, tokenizer, config.max_tokens
             )
@@ -157,22 +165,69 @@ def correct_candidates(
         if confidence >= config.confidence_threshold and changes:
             # Model explicitly suggested changes
             if result_data.get("need_lip", False) and confidence < 0.8:
-                pass
+                logger.info("  Decision: SKIP (need_lip=True, confidence=%.2f < 0.8)", confidence)
             else:
                 should_apply = True
         elif not changes and candidate.error_found.lower() != candidate.term.lower():
-            # Model returned no changes, but we have a known error→term mapping.
-            # Force-apply the vocab correction (the error was already matched).
-            should_apply = True
-            changes = [f"{candidate.error_found} → {candidate.term}"]
+            # Model returned no changes. Check if the model's corrected
+            # output already contains the correct term — if so, the text
+            # is fine and we should trust the model. If not, force-apply.
+            corrected_output = result_data.get("corrected", "").lower()
+            # Use word boundaries to avoid matching inside other words
+            term_pattern = re.compile(r'\b' + re.escape(candidate.term.lower()) + r'\b')
+            error_pattern = re.compile(r'\b' + re.escape(candidate.error_found.lower()) + r'\b')
+            term_already_present = bool(term_pattern.search(corrected_output))
+            error_still_present = bool(error_pattern.search(corrected_output))
+
+            if term_already_present:
+                # Model output already has the correct term → text is fine
+                logger.info("  Decision: SKIP — model output already contains '%s' (confidence=%.2f)",
+                             candidate.term, confidence)
+            elif error_still_present:
+                # Error still in model output, correct term absent → force apply
+                should_apply = True
+                changes = [f"{candidate.error_found} → {candidate.term}"]
+                logger.info("  Decision: Force-apply — error '%s' still in model output, term '%s' absent",
+                             candidate.error_found, candidate.term)
+            elif confidence < config.confidence_threshold:
+                # Neither found clearly, model unsure → force apply
+                should_apply = True
+                changes = [f"{candidate.error_found} → {candidate.term}"]
+                logger.info("  Decision: Force-apply — model unsure (confidence=%.2f)", confidence)
+            else:
+                # Model confident, term not found but error also gone → trust model
+                logger.info("  Decision: SKIP — model confident, error resolved (confidence=%.2f)", confidence)
 
         if should_apply:
-            pattern = re.compile(re.escape(candidate.error_found), re.IGNORECASE)
+            # Use word boundaries to avoid replacing inside other words
+            # e.g. 'SOC' should NOT match inside 'process', 'associated', etc.
+            pattern = re.compile(
+                r'\b' + re.escape(candidate.error_found) + r'\b',
+                re.IGNORECASE,
+            )
+            # Apply on flat text
             new_text = pattern.sub(candidate.term, corrected_text, count=1)
             if new_text != corrected_text:
                 corrected_text = new_text
+                # Also apply directly on the matching segment to avoid
+                # offset-drift from _rebuild_segments when text length changes
+                for seg in corrected_segments:
+                    seg_new = pattern.sub(candidate.term, seg.get("text", ""), count=1)
+                    if seg_new != seg.get("text", ""):
+                        seg["text"] = seg_new
+                        break  # count=1: only first match
                 applied = True
                 applied_count += 1
+                logger.info("  Result: APPLIED — '%s' → '%s' (confidence=%.2f)",
+                             candidate.error_found, candidate.term, confidence)
+            else:
+                logger.info("  Result: NO CHANGE — pattern not found as whole word in text")
+        else:
+            if not should_apply and confidence < config.confidence_threshold:
+                logger.info("  Result: SKIPPED — confidence %.2f < threshold %.2f",
+                             confidence, config.confidence_threshold)
+            elif not changes:
+                logger.info("  Result: SKIPPED — no changes suggested")
 
         results.append(
             CorrectionResult(
@@ -189,14 +244,7 @@ def correct_candidates(
     # Build enhanced transcript
     enhanced = dict(transcript)
     enhanced["text"] = corrected_text
-
-    # Rebuild segments with corrected text
-    if corrected_text != transcript.get("text", ""):
-        enhanced["segments"] = _rebuild_segments(
-            transcript.get("segments", []),
-            transcript.get("text", ""),
-            corrected_text,
-        )
+    enhanced["segments"] = corrected_segments
 
     # Add correction metadata to meta
     if "meta" not in enhanced:
@@ -209,12 +257,17 @@ def correct_candidates(
         "confidence_threshold": config.confidence_threshold,
     }
 
+    total_ms = (time.time() - t0) * 1000
+    logger.info("=== Correction Summary for %s ===", file_id)
+    logger.info("  Total candidates: %d | Applied: %d | Skipped: %d | Time: %.0fms",
+                len(candidates), applied_count, len(candidates) - applied_count, total_ms)
+
     report = CorrectionReport(
         file_id=file_id,
         corrections_attempted=len(candidates),
         corrections_applied=applied_count,
         results=results,
-        processing_time_ms=(time.time() - t0) * 1000,
+        processing_time_ms=total_ms,
     )
 
     return enhanced, report

@@ -4,12 +4,12 @@
 <h1 class="text-2xl font-bold mb-6">Compare Transcripts</h1>
 
 <!-- Load from past corrections -->
-<div class="bg-white rounded-lg shadow p-6 mb-6">
+<div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-6 mb-6">
     <h2 class="text-lg font-semibold mb-3">Load from Correction History</h2>
     <div class="flex items-end gap-4">
         <div class="flex-1">
             <label class="block text-sm font-medium mb-1">Select a past correction</label>
-            <select id="job-select" class="w-full border rounded-lg p-2 text-sm">
+            <select id="job-select" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg p-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100">
                 <option value="">Loading corrections...</option>
             </select>
         </div>
@@ -17,50 +17,99 @@
             Load & Compare
         </button>
     </div>
-    <p class="text-xs text-gray-400 mt-2">Or paste transcripts manually below</p>
+    <p class="text-xs text-gray-400 dark:text-gray-500 mt-2">Or paste transcripts manually below</p>
 </div>
 
 <!-- Manual paste -->
-<div class="bg-white rounded-lg shadow p-6 mb-6">
+<div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-6 mb-6">
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         <div>
             <label class="block text-sm font-medium mb-1">Original (ASR Output)</label>
-            <textarea id="reference" class="w-full border rounded-lg p-3 text-sm h-40" placeholder="Paste original ASR transcript..."></textarea>
+            <textarea id="reference" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg p-3 text-sm h-40 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500" placeholder="Paste original ASR transcript..."></textarea>
         </div>
         <div>
             <label class="block text-sm font-medium mb-1">Enhanced (Corrected)</label>
-            <textarea id="hypothesis" class="w-full border rounded-lg p-3 text-sm h-40" placeholder="Paste enhanced/corrected transcript..."></textarea>
+            <textarea id="hypothesis" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg p-3 text-sm h-40 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500" placeholder="Paste enhanced/corrected transcript..."></textarea>
         </div>
     </div>
 
     <div class="mb-4">
         <label class="block text-sm font-medium mb-1">Target Terms (optional, JSON array)</label>
-        <textarea id="terms" class="w-full border rounded-lg p-3 text-sm h-20" placeholder='[{"term": "ScreenApp", "category": "product_name", "known_errors": ["Screen App"]}]'></textarea>
+        <textarea id="terms" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg p-3 text-sm h-20 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500" placeholder='[{"term": "ScreenApp", "category": "product_name", "known_errors": ["Screen App"]}]'></textarea>
     </div>
 
     <button onclick="runComparison()" id="compare-btn" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 text-sm font-medium">
         Compare
     </button>
-    <span id="compare-status" class="ml-3 text-sm text-gray-500"></span>
+    <span id="compare-status" class="ml-3 text-sm text-gray-500 dark:text-gray-400"></span>
+</div>
+
+<!-- Correction Details (from loaded job) -->
+<div id="correction-details" class="hidden mb-6">
+    <h2 class="text-lg font-semibold mb-3">Correction Details</h2>
+
+    <!-- Summary bar -->
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-3">
+            <div class="text-xs text-gray-500 dark:text-gray-400">File ID</div>
+            <div id="cd-file-id" class="text-sm font-mono font-bold truncate"></div>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-3">
+            <div class="text-xs text-gray-500 dark:text-gray-400">Applied / Attempted</div>
+            <div id="cd-applied" class="text-xl font-bold"></div>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-3">
+            <div class="text-xs text-gray-500 dark:text-gray-400">Processing Time</div>
+            <div id="cd-time" class="text-xl font-bold"></div>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-3">
+            <div class="text-xs text-gray-500 dark:text-gray-400">Original Length</div>
+            <div id="cd-orig-len" class="text-xl font-bold"></div>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-3">
+            <div class="text-xs text-gray-500 dark:text-gray-400">Enhanced Length</div>
+            <div id="cd-enh-len" class="text-xl font-bold"></div>
+        </div>
+    </div>
+
+    <!-- Per-correction table -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 overflow-hidden">
+        <table class="w-full text-sm">
+            <thead class="bg-gray-50 dark:bg-gray-700">
+                <tr>
+                    <th class="px-3 py-2 text-left">#</th>
+                    <th class="px-3 py-2 text-left">Status</th>
+                    <th class="px-3 py-2 text-left">Error Found</th>
+                    <th class="px-3 py-2 text-left">Target Term</th>
+                    <th class="px-3 py-2 text-left">Category</th>
+                    <th class="px-3 py-2 text-left">Confidence</th>
+                    <th class="px-3 py-2 text-left">Changes</th>
+                    <th class="px-3 py-2 text-left">OCR Hints</th>
+                    <th class="px-3 py-2 text-left">Context</th>
+                </tr>
+            </thead>
+            <tbody id="cd-table-body"></tbody>
+        </table>
+    </div>
 </div>
 
 <div id="results" class="hidden">
     <!-- Metrics -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div class="bg-white rounded-lg shadow p-4">
-            <div class="text-sm text-gray-500">WER</div>
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-4">
+            <div class="text-sm text-gray-500 dark:text-gray-400">WER</div>
             <div id="wer-val" class="text-2xl font-bold"></div>
         </div>
-        <div class="bg-white rounded-lg shadow p-4">
-            <div class="text-sm text-gray-500">CER</div>
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-4">
+            <div class="text-sm text-gray-500 dark:text-gray-400">CER</div>
             <div id="cer-val" class="text-2xl font-bold"></div>
         </div>
-        <div class="bg-white rounded-lg shadow p-4">
-            <div class="text-sm text-gray-500">Substitutions</div>
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-4">
+            <div class="text-sm text-gray-500 dark:text-gray-400">Substitutions</div>
             <div id="sub-val" class="text-2xl font-bold"></div>
         </div>
-        <div class="bg-white rounded-lg shadow p-4">
-            <div class="text-sm text-gray-500">Insertions / Deletions</div>
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-4">
+            <div class="text-sm text-gray-500 dark:text-gray-400">Insertions / Deletions</div>
             <div id="insdel-val" class="text-2xl font-bold"></div>
         </div>
     </div>
@@ -72,6 +121,7 @@
             <div class="diff-col-header">
                 Original (ASR Output)
                 <span class="del" style="font-size:12px;margin-left:6px;">removed</span>
+                <span class="sub-old" style="font-size:12px;margin-left:6px;">substituted</span>
             </div>
             <div class="diff-scroll" id="scroll-left">
                 <div class="diff-box" id="diff-left"></div>
@@ -81,6 +131,7 @@
             <div class="diff-col-header">
                 Corrected (Enhanced)
                 <span class="add" style="font-size:12px;margin-left:6px;">added</span>
+                <span class="sub-new" style="font-size:12px;margin-left:6px;">substituted</span>
             </div>
             <div class="diff-scroll" id="scroll-right">
                 <div class="diff-box" id="diff-right"></div>
@@ -91,37 +142,44 @@
     <!-- TTER -->
     <div id="tter-section" class="hidden mt-6">
         <h2 class="text-lg font-semibold mb-3">TTER Results</h2>
-        <div class="bg-white rounded-lg shadow p-4">
-            <div class="text-sm text-gray-500 mb-1">Overall TTER</div>
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-4">
+            <div class="text-sm text-gray-500 dark:text-gray-400 mb-1">Overall TTER</div>
             <div id="tter-val" class="text-2xl font-bold mb-3"></div>
             <div id="tter-details" class="text-sm"></div>
         </div>
     </div>
 
     <!-- Raw JSON -->
-    <details class="bg-white rounded-lg shadow p-4 mt-6">
+    <details class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-4 mt-6">
         <summary class="text-sm font-medium cursor-pointer">Raw Result JSON</summary>
-        <pre id="json-output" class="text-xs bg-gray-50 p-3 rounded overflow-auto max-h-60 mt-2"></pre>
+        <pre id="json-output" class="text-xs bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-300 p-3 rounded overflow-auto max-h-60 mt-2"></pre>
     </details>
 </div>
 
 <style>
     .diff-wrapper { display: flex; gap: 12px; }
     .diff-col { flex: 1; min-width: 0; }
-    .diff-col-header { font-weight: bold; margin-bottom: 8px; font-size: 14px; color: #374151; }
+    .diff-col-header { font-weight: bold; margin-bottom: 8px; font-size: 14px; }
     .diff-scroll { max-height: 460px; overflow-y: auto; }
     .diff-box {
         font-family: 'Source Code Pro', 'Courier New', monospace;
         font-size: 13px; line-height: 1.8;
         white-space: pre-wrap; word-wrap: break-word;
-        border: 1px solid #e5e7eb; border-radius: 8px;
-        padding: 16px; color: #1a1a1a; background: #f9fafb;
-        min-height: 120px;
+        border-radius: 8px; padding: 16px; min-height: 120px;
+        border: 1px solid #e5e7eb; color: #1a1a1a; background: #f9fafb;
     }
+    .dark .diff-box { border-color: #374151; color: #e5e7eb; background: #111827; }
     .diff-box .del { background-color: #fecaca; text-decoration: line-through; padding: 2px 4px; border-radius: 3px; color: #991b1b; }
     .diff-box .add { background-color: #bbf7d0; font-weight: bold; padding: 2px 4px; border-radius: 3px; color: #166534; }
     .diff-box .sub-old { background-color: #fef08a; text-decoration: line-through; padding: 2px 4px; border-radius: 3px; color: #854d0e; }
     .diff-box .sub-new { background-color: #fef08a; font-weight: bold; padding: 2px 4px; border-radius: 3px; color: #854d0e; }
+    .dark .diff-box .del { background-color: #7f1d1d; color: #fca5a5; }
+    .dark .diff-box .add { background-color: #14532d; color: #86efac; }
+    .dark .diff-box .sub-old { background-color: #713f12; color: #fde68a; }
+    .dark .diff-box .sub-new { background-color: #713f12; color: #fde68a; }
+    .confidence-high { color: #16a34a; }
+    .confidence-med { color: #ca8a04; }
+    .confidence-low { color: #dc2626; }
 </style>
 
 <script>
@@ -129,8 +187,14 @@ let correctionJobs = [];
 
 function esc(str) {
     const div = document.createElement('div');
-    div.textContent = str;
+    div.textContent = str || '';
     return div.innerHTML;
+}
+
+function confidenceClass(c) {
+    if (c >= 0.8) return 'confidence-high';
+    if (c >= 0.5) return 'confidence-med';
+    return 'confidence-low';
 }
 
 function renderDiff(diff) {
@@ -155,6 +219,85 @@ function renderDiff(diff) {
     }
     document.getElementById('diff-left').innerHTML = leftHtml;
     document.getElementById('diff-right').innerHTML = rightHtml;
+}
+
+function renderCorrectionDetails(job) {
+    const section = document.getElementById('correction-details');
+    const corrections = job.corrections || [];
+
+    document.getElementById('cd-file-id').textContent = job.file_id || '-';
+    document.getElementById('cd-applied').textContent =
+        (job.corrections_applied || 0) + ' / ' + (job.corrections_attempted || 0);
+    document.getElementById('cd-time').textContent =
+        Math.round(job.processing_time_ms || 0) + 'ms';
+    document.getElementById('cd-orig-len').textContent =
+        (job.original_text || '').length + ' chars';
+    document.getElementById('cd-enh-len').textContent =
+        (job.enhanced_text || '').length + ' chars';
+
+    const tbody = document.getElementById('cd-table-body');
+    if (!corrections.length) {
+        tbody.innerHTML = '<tr><td colspan="9" class="px-3 py-4 text-center text-gray-400">No correction details available</td></tr>';
+        section.classList.remove('hidden');
+        return;
+    }
+
+    let html = '';
+    corrections.forEach((c, i) => {
+        const applied = c.applied;
+        const statusBadge = applied
+            ? '<span class="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">APPLIED</span>'
+            : '<span class="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400">SKIPPED</span>';
+
+        const conf = (c.confidence || 0);
+        const confHtml = `<span class="${confidenceClass(conf)}" title="Confidence">${(conf * 100).toFixed(0)}%</span>`;
+
+        const changesHtml = (c.changes || []).map(ch => '<span class="text-xs">' + esc(ch) + '</span>').join('<br>') || '<span class="text-gray-400">none</span>';
+
+        const ocrCount = (c.ocr_hints_used || []).length;
+        const ocrHtml = ocrCount > 0
+            ? `<span class="text-blue-500 dark:text-blue-400 cursor-pointer" title="${esc((c.ocr_hints_used || []).join(', '))}">${ocrCount} hints</span>`
+            : '<span class="text-gray-400">none</span>';
+
+        const ctx = (c.context || '').substring(0, 60);
+
+        html += `
+        <tr class="border-t border-gray-200 dark:border-gray-700 ${applied ? '' : 'opacity-60'}">
+            <td class="px-3 py-2 text-gray-400">${i + 1}</td>
+            <td class="px-3 py-2">${statusBadge}</td>
+            <td class="px-3 py-2 font-mono text-xs font-bold text-red-500 dark:text-red-400">${esc(c.error_found)}</td>
+            <td class="px-3 py-2 font-mono text-xs font-bold text-green-600 dark:text-green-400">${esc(c.term)}</td>
+            <td class="px-3 py-2">
+                <span class="px-1.5 py-0.5 rounded text-xs bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300">${esc(c.category)}</span>
+            </td>
+            <td class="px-3 py-2 font-bold">${confHtml}</td>
+            <td class="px-3 py-2">${changesHtml}</td>
+            <td class="px-3 py-2">${ocrHtml}</td>
+            <td class="px-3 py-2 text-xs text-gray-400 dark:text-gray-500 font-mono max-w-xs truncate" title="${esc(c.context)}">${esc(ctx)}</td>
+        </tr>`;
+
+        // Expandable OCR hints row
+        if (ocrCount > 0) {
+            html += `
+            <tr class="hidden" id="ocr-row-${i}">
+                <td colspan="9" class="px-3 py-2 bg-blue-50 dark:bg-blue-900/20 text-xs">
+                    <strong>OCR Hints:</strong> ${(c.ocr_hints_used || []).map(h => '<span class="inline-block bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded mr-1 mb-1">' + esc(h) + '</span>').join('')}
+                </td>
+            </tr>`;
+        }
+    });
+
+    tbody.innerHTML = html;
+
+    // Toggle OCR rows on click
+    tbody.querySelectorAll('[class*="cursor-pointer"]').forEach((el, i) => {
+        el.addEventListener('click', () => {
+            const row = document.getElementById('ocr-row-' + i);
+            if (row) row.classList.toggle('hidden');
+        });
+    });
+
+    section.classList.remove('hidden');
 }
 
 // Synced scrolling
@@ -191,9 +334,11 @@ async function loadCorrectionJobs() {
             const job = correctionJobs[i];
             const applied = job.corrections_applied ?? '?';
             const attempted = job.corrections_attempted ?? '?';
+            const time = job.processing_time_ms ? Math.round(job.processing_time_ms) + 'ms' : '';
+            const date = job.created_at ? new Date(job.created_at).toLocaleString() : '';
             const opt = document.createElement('option');
             opt.value = i;
-            opt.textContent = `${job.file_id} — ${applied}/${attempted} corrections applied`;
+            opt.textContent = `${job.file_id} — ${applied}/${attempted} corrections — ${time} — ${date}`;
             select.appendChild(opt);
         }
     } catch (e) {
@@ -208,6 +353,7 @@ function loadSelectedJob() {
     if (!job) return;
     document.getElementById('reference').value = job.original_text || '';
     document.getElementById('hypothesis').value = job.enhanced_text || '';
+    renderCorrectionDetails(job);
     runComparison();
 }
 
@@ -254,7 +400,7 @@ async function runComparison() {
             document.getElementById('tter-section').classList.remove('hidden');
             document.getElementById('tter-val').textContent = data.tter.overall_tter + '%';
             document.getElementById('tter-details').innerHTML = data.tter.term_results.map(t =>
-                `<div class="flex justify-between py-1 border-b"><span>${esc(t.term)} (${esc(t.category)})</span><span>${t.errors}/${t.occurrences} errors — ${t.tter}%</span></div>`
+                `<div class="flex justify-between py-1 border-b border-gray-200 dark:border-gray-700"><span>${esc(t.term)} (${esc(t.category)})</span><span>${t.errors}/${t.occurrences} errors — ${t.tter}%</span></div>`
             ).join('');
         } else {
             document.getElementById('tter-section').classList.add('hidden');

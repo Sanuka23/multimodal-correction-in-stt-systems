@@ -3,32 +3,32 @@
 {% block content %}
 <h1 class="text-2xl font-bold mb-6">LoRA Fine-Tuning</h1>
 
-<div class="bg-white rounded-lg shadow p-6 mb-6">
+<div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-6 mb-6">
     <h2 class="text-lg font-semibold mb-4">Start New Training</h2>
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
         <div>
             <label class="block text-sm font-medium mb-1">Iterations</label>
-            <input id="iterations" type="number" value="1000" class="w-full border rounded-lg p-2 text-sm">
+            <input id="iterations" type="number" value="1000" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg p-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100">
         </div>
         <div>
             <label class="block text-sm font-medium mb-1">Batch Size</label>
-            <input id="batch_size" type="number" value="2" class="w-full border rounded-lg p-2 text-sm">
+            <input id="batch_size" type="number" value="2" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg p-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100">
         </div>
         <div>
             <label class="block text-sm font-medium mb-1">Learning Rate</label>
-            <input id="learning_rate" type="text" value="2e-5" class="w-full border rounded-lg p-2 text-sm">
+            <input id="learning_rate" type="text" value="2e-5" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg p-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100">
         </div>
     </div>
     <button onclick="startTraining()" id="train-btn" class="bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700 text-sm font-medium">
         Start Training
     </button>
-    <span id="train-status" class="ml-3 text-sm text-gray-500"></span>
+    <span id="train-status" class="ml-3 text-sm text-gray-500 dark:text-gray-400"></span>
 </div>
 
 <h2 class="text-lg font-semibold mb-3">Training History</h2>
-<div class="bg-white rounded-lg shadow overflow-hidden">
+<div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 overflow-hidden">
     <table class="w-full text-sm">
-        <thead class="bg-gray-50">
+        <thead class="bg-gray-50 dark:bg-gray-700">
             <tr>
                 <th class="px-4 py-2 text-left">ID</th>
                 <th class="px-4 py-2 text-left">Status</th>
@@ -40,25 +40,25 @@
         </thead>
         <tbody>
             {% for job in training_jobs %}
-            <tr class="border-t">
-                <td class="px-4 py-2 font-mono text-xs">{{ job._id[:8] }}...</td>
+            <tr class="border-t border-gray-200 dark:border-gray-700">
+                <td class="px-4 py-2 font-mono text-xs text-gray-400 dark:text-gray-500">{{ job._id[:8] }}...</td>
                 <td class="px-4 py-2">
-                    <span class="{% if job.status == 'completed' %}text-green-600{% elif job.status == 'failed' %}text-red-600{% else %}text-yellow-600{% endif %}">
+                    <span class="{% if job.status == 'completed' %}text-green-600 dark:text-green-400{% elif job.status == 'failed' %}text-red-600 dark:text-red-400{% else %}text-yellow-600 dark:text-yellow-400{% endif %}">
                         {{ job.status }}
                     </span>
                 </td>
                 <td class="px-4 py-2">
                     {% if job.duration_ms %}{{ "%.1f"|format(job.duration_ms / 60000) }} min{% else %}-{% endif %}
                 </td>
-                <td class="px-4 py-2 text-xs">
+                <td class="px-4 py-2 text-xs text-gray-600 dark:text-gray-400">
                     {% if job.input_summary %}
                         iters: {{ job.input_summary.get('iterations', '-') }},
                         bs: {{ job.input_summary.get('batch_size', '-') }},
                         lr: {{ job.input_summary.get('learning_rate', '-') }}
                     {% endif %}
                 </td>
-                <td class="px-4 py-2 text-gray-500">{{ job.created_at.strftime('%m-%d %H:%M') if job.created_at else '-' }}</td>
-                <td class="px-4 py-2 text-xs text-red-500">{{ job.error or '' }}</td>
+                <td class="px-4 py-2 text-gray-500 dark:text-gray-400">{{ job.created_at.strftime('%m-%d %H:%M') if job.created_at else '-' }}</td>
+                <td class="px-4 py-2 text-xs text-red-500 dark:text-red-400">{{ job.error or '' }}</td>
             </tr>
             {% endfor %}
         </tbody>

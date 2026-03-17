@@ -16,14 +16,14 @@ def find_occurrences(
 ) -> List[Tuple[int, int]]:
     """Find all occurrences of a term in text.
 
-    Uses regex word boundaries for short terms (<=4 chars) to avoid
-    false positives like 'Al' inside 'also'.
+    Always uses word boundaries to avoid matching inside other words
+    (e.g. 'SOC' should not match inside 'process' or 'associated').
     """
     norm_text = normalize(text)
     norm_term = normalize(term)
     positions = []
 
-    if word_boundary and len(norm_term) <= 4:
+    if word_boundary:
         pattern = re.compile(r'\b' + re.escape(norm_term) + r'\b')
         for match in pattern.finditer(norm_text):
             positions.append((match.start(), match.end()))

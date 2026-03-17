@@ -51,33 +51,71 @@ async def asr_correct(
     from asr_correction.vocabulary import load_domain_vocab, merge_vocabularies
 
     start_time = time.time()
+
+    # Log incoming request details
+    transcript_text = _extract_text(request.transcript)
+    segment_count = len(request.transcript.get("segments", []))
+    logger.info(
+        "=== ASR Correction Request ===\n"
+        "  file_id:        %s\n"
+        "  user_id:        %s\n"
+        "  segments:       %d\n"
+        "  transcript_len: %d chars\n"
+        "  has_ocr_xml:    %s\n"
+        "  has_video_url:  %s\n"
+        "  vocab_type:     %s",
+        request.file_id,
+        user_id,
+        segment_count,
+        len(transcript_text),
+        bool(request.ocr_xml),
+        bool(request.video_url),
+        type(request.custom_vocabulary).__name__,
+    )
+
     job_id = await create_job(
         "correction",
         file_id=request.file_id,
         input_summary={"file_id": request.file_id, "user_id": user_id},
     )
+    logger.info("Created job_id=%s for file_id=%s", job_id, request.file_id)
 
     try:
         # Resolve OCR data: cached XML > video URL extraction > none
         ocr_provider = None
         ocr_xml_data = request.ocr_xml
 
-        if not ocr_xml_data and request.video_url:
+        if ocr_xml_data:
+            logger.info("OCR: Using provided ocr_xml (%d chars)", len(ocr_xml_data))
+        elif request.video_url:
             # Check dashboard DB cache first
             cached = await get_cached_ocr(request.file_id)
             if cached:
-                logger.info("Using cached OCR for file_id=%s", request.file_id)
+                logger.info("OCR: Using cached OCR from dashboard DB for file_id=%s (%d chars)", request.file_id, len(cached))
                 ocr_xml_data = cached
             else:
-                # Try extracting OCR from video (stub for now)
+                logger.info("OCR: No cache found, attempting extraction from video_url")
                 from asr_correction.ocr_extractor import extract_ocr_from_video
+                from asr_correction.config import CorrectionConfig as _CConfig
+                _ocr_cfg = _CConfig()
                 try:
-                    extracted = await extract_ocr_from_video(request.video_url)
+                    extracted = await extract_ocr_from_video(
+                        request.video_url,
+                        interval_s=_ocr_cfg.ocr_frame_interval_s,
+                        max_frames=_ocr_cfg.ocr_max_frames,
+                        min_confidence=_ocr_cfg.ocr_min_confidence,
+                        dedup_threshold=_ocr_cfg.ocr_dedup_threshold,
+                    )
                     if extracted:
                         await cache_ocr_result(request.file_id, extracted)
                         ocr_xml_data = extracted
+                        logger.info("OCR: Extraction successful, cached result (%d chars)", len(extracted))
+                    else:
+                        logger.info("OCR: Extraction returned None (stub/unavailable)")
                 except Exception as ocr_err:
-                    logger.warning("OCR extraction failed: %s", ocr_err)
+                    logger.warning("OCR: Extraction failed: %s", ocr_err)
+        else:
+            logger.info("OCR: No ocr_xml or video_url provided — running without OCR context")
 
         if ocr_xml_data:
             def ocr_callback(file_id: str, start_time: float, end_time: float):
@@ -88,10 +126,18 @@ async def asr_correct(
         vocab = request.custom_vocabulary
         if isinstance(vocab, str):
             vocab = [v.strip() for v in vocab.split("\n") if v.strip()]
+        logger.info("Vocabulary: %d custom terms provided", len(vocab) if vocab else 0)
 
         config = CorrectionConfig(dry_run=False)
+        logger.info(
+            "Config: dry_run=%s, confidence_threshold=%.2f, backend=%s",
+            config.dry_run, config.confidence_threshold, config.backend or "auto",
+        )
 
         # Run correction in thread pool (blocking ML inference)
+        logger.info("Starting ML correction pipeline...")
+        inference_start = time.time()
+
         def _run_correction():
             return correct_transcript(
                 transcript=request.transcript,
@@ -102,10 +148,13 @@ async def asr_correct(
             )
 
         enhanced, report = await _run_in_thread(_run_correction)
+        inference_ms = (time.time() - inference_start) * 1000
+        logger.info("ML pipeline completed in %.0fms", inference_ms)
 
         # Build vocab_used list
         domain_vocab = load_domain_vocab(config.domain_vocab_path)
         vocab_terms = merge_vocabularies(vocab, domain_vocab)
+        logger.info("Merged vocabulary: %d total terms (custom + domain)", len(vocab_terms))
 
         # Serialize per-correction results
         corrections_detail = []
@@ -126,6 +175,30 @@ async def asr_correct(
                 "applied": r.applied,
             })
 
+        # Log correction results summary
+        logger.info(
+            "=== Correction Results ===\n"
+            "  candidates_found:     %d\n"
+            "  corrections_attempted: %d\n"
+            "  corrections_applied:   %d\n"
+            "  processing_time:       %.0fms",
+            len(report.results),
+            report.corrections_attempted,
+            report.corrections_applied,
+            report.processing_time_ms,
+        )
+        for r in report.results:
+            status = "APPLIED" if r.applied else "SKIPPED"
+            logger.info(
+                "  [%s] '%s' → '%s' | confidence=%.2f | changes=%s | ocr_hints=%d",
+                status,
+                r.candidate.error_found,
+                r.candidate.term,
+                r.confidence,
+                r.changes,
+                len(r.ocr_hints_used),
+            )
+
         # Save transcripts to dashboard database for comparison
         try:
             await save_correction(
@@ -139,6 +212,7 @@ async def asr_correct(
                     "processing_time_ms": report.processing_time_ms,
                 },
             )
+            logger.info("Saved correction pair to dashboard DB for file_id=%s", request.file_id)
         except Exception as save_err:
             logger.warning("Failed to save correction to dashboard db: %s", save_err)
 
@@ -147,6 +221,11 @@ async def asr_correct(
             "corrections_applied": report.corrections_applied,
             "corrections_attempted": report.corrections_attempted,
         })
+
+        logger.info(
+            "=== Request Complete === file_id=%s | total_time=%.0fms | applied=%d/%d",
+            request.file_id, duration_ms, report.corrections_applied, report.corrections_attempted,
+        )
 
         return {
             "enhanced_transcript": enhanced,
@@ -163,5 +242,5 @@ async def asr_correct(
     except Exception as e:
         duration_ms = (time.time() - start_time) * 1000
         await fail_job(job_id, str(e), duration_ms)
-        logger.error("ASR correction failed: %s", e, exc_info=True)
+        logger.error("ASR correction failed after %.0fms: %s", duration_ms, e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"ASR correction failed: {str(e)}")

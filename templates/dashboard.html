@@ -3,29 +3,35 @@
 {% block content %}
 <h1 class="text-2xl font-bold mb-6">Dashboard</h1>
 
-<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-    <div class="bg-white rounded-lg shadow p-4">
-        <div class="text-sm text-gray-500">Correction Jobs</div>
+<!-- Stats cards -->
+<div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-4">
+        <div class="text-sm text-gray-500 dark:text-gray-400">Correction Jobs</div>
         <div class="text-2xl font-bold">{{ correction_count }}</div>
     </div>
-    <div class="bg-white rounded-lg shadow p-4">
-        <div class="text-sm text-gray-500">Total Corrections Applied</div>
-        <div class="text-2xl font-bold">{{ total_corrections }}</div>
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-4">
+        <div class="text-sm text-gray-500 dark:text-gray-400">Total Applied</div>
+        <div class="text-2xl font-bold text-green-600 dark:text-green-400">{{ total_corrections }}</div>
     </div>
-    <div class="bg-white rounded-lg shadow p-4">
-        <div class="text-sm text-gray-500">Evaluation Jobs</div>
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-4">
+        <div class="text-sm text-gray-500 dark:text-gray-400">Total Attempted</div>
+        <div class="text-2xl font-bold">{{ total_attempted }}</div>
+    </div>
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-4">
+        <div class="text-sm text-gray-500 dark:text-gray-400">Evaluation Jobs</div>
         <div class="text-2xl font-bold">{{ eval_count }}</div>
     </div>
-    <div class="bg-white rounded-lg shadow p-4">
-        <div class="text-sm text-gray-500">Avg Duration</div>
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-4">
+        <div class="text-sm text-gray-500 dark:text-gray-400">Avg Duration</div>
         <div class="text-2xl font-bold">{{ "%.0f"|format(avg_duration_ms) }}ms</div>
     </div>
 </div>
 
+<!-- Recent Jobs -->
 <h2 class="text-lg font-semibold mb-3">Recent Jobs</h2>
-<div class="bg-white rounded-lg shadow overflow-hidden">
+<div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 overflow-hidden mb-8">
     <table class="w-full text-sm">
-        <thead class="bg-gray-50">
+        <thead class="bg-gray-50 dark:bg-gray-700">
             <tr>
                 <th class="px-4 py-2 text-left">Type</th>
                 <th class="px-4 py-2 text-left">File ID</th>
@@ -37,26 +43,28 @@
         </thead>
         <tbody>
             {% for job in recent_jobs %}
-            <tr class="border-t">
+            <tr class="border-t border-gray-200 dark:border-gray-700">
                 <td class="px-4 py-2">
                     <span class="px-2 py-0.5 rounded text-xs font-medium
-                        {% if job.job_type == 'correction' %}bg-blue-100 text-blue-700
-                        {% elif job.job_type == 'evaluation' %}bg-green-100 text-green-700
-                        {% else %}bg-purple-100 text-purple-700{% endif %}">
+                        {% if job.job_type == 'correction' %}bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300
+                        {% elif job.job_type == 'evaluation' %}bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300
+                        {% else %}bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300{% endif %}">
                         {{ job.job_type }}
                     </span>
                 </td>
-                <td class="px-4 py-2 text-gray-500 font-mono text-xs">{{ job.file_id or '-' }}</td>
+                <td class="px-4 py-2 text-gray-500 dark:text-gray-400 font-mono text-xs">{{ job.file_id or '-' }}</td>
                 <td class="px-4 py-2">
-                    <span class="{% if job.status == 'completed' %}text-green-600{% elif job.status == 'failed' %}text-red-600{% else %}text-yellow-600{% endif %}">
+                    <span class="{% if job.status == 'completed' %}text-green-600 dark:text-green-400{% elif job.status == 'failed' %}text-red-600 dark:text-red-400{% else %}text-yellow-600 dark:text-yellow-400{% endif %}">
                         {{ job.status }}
                     </span>
                 </td>
                 <td class="px-4 py-2">{{ "%.0f"|format(job.duration_ms or 0) }}ms</td>
-                <td class="px-4 py-2 text-gray-500">{{ job.created_at.strftime('%Y-%m-%d %H:%M') if job.created_at else '-' }}</td>
-                <td class="px-4 py-2 text-xs text-gray-500">
+                <td class="px-4 py-2 text-gray-500 dark:text-gray-400">{{ job.created_at.strftime('%Y-%m-%d %H:%M') if job.created_at else '-' }}</td>
+                <td class="px-4 py-2 text-xs text-gray-500 dark:text-gray-400">
                     {% if job.result_summary %}
-                        {% for k, v in job.result_summary.items() %}{{ k }}: {{ v }}{% if not loop.last %}, {% endif %}{% endfor %}
+                        {% for k, v in job.result_summary.items() %}
+                            <span class="{% if k == 'corrections_applied' %}text-green-600 dark:text-green-400 font-bold{% endif %}">{{ k }}: {{ v }}</span>{% if not loop.last %}, {% endif %}
+                        {% endfor %}
                     {% endif %}
                 </td>
             </tr>
@@ -64,4 +72,84 @@
         </tbody>
     </table>
 </div>
+
+<!-- Recent Corrections Detail -->
+<h2 class="text-lg font-semibold mb-3">Recent Corrections</h2>
+<div id="corrections-list" class="space-y-3">
+    <p class="text-sm text-gray-400">Loading...</p>
+</div>
+
+<script>
+function esc(str) {
+    const div = document.createElement('div');
+    div.textContent = str || '';
+    return div.innerHTML;
+}
+
+async function loadRecentCorrections() {
+    try {
+        const res = await fetch('/api/corrections?limit=5');
+        const corrections = await res.json();
+        const container = document.getElementById('corrections-list');
+
+        if (!corrections.length) {
+            container.innerHTML = '<p class="text-sm text-gray-400">No corrections yet</p>';
+            return;
+        }
+
+        let html = '';
+        for (const c of corrections) {
+            const details = c.corrections || [];
+            const applied = details.filter(d => d.applied);
+            const skipped = details.filter(d => !d.applied);
+            const date = c.created_at ? new Date(c.created_at).toLocaleString() : '';
+
+            html += `
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-4">
+                <div class="flex items-center justify-between mb-2">
+                    <div>
+                        <span class="font-mono text-xs text-gray-400">${esc(c.file_id)}</span>
+                        <span class="ml-2 text-xs text-gray-400">${date}</span>
+                    </div>
+                    <div class="flex gap-2">
+                        <span class="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">
+                            ${c.corrections_applied || 0} applied
+                        </span>
+                        <span class="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400">
+                            ${(c.corrections_attempted || 0) - (c.corrections_applied || 0)} skipped
+                        </span>
+                        <span class="text-xs text-gray-400">${Math.round(c.processing_time_ms || 0)}ms</span>
+                    </div>
+                </div>`;
+
+            if (applied.length > 0) {
+                html += '<div class="text-xs space-y-1 mt-2">';
+                for (const a of applied) {
+                    const ocrCount = (a.ocr_hints_used || []).length;
+                    html += `
+                    <div class="flex items-center gap-2 py-1 border-b border-gray-100 dark:border-gray-700">
+                        <span class="text-green-600 dark:text-green-400 font-bold">&#10003;</span>
+                        <span class="font-mono text-red-500 dark:text-red-400 line-through">${esc(a.error_found)}</span>
+                        <span>→</span>
+                        <span class="font-mono text-green-600 dark:text-green-400 font-bold">${esc(a.term)}</span>
+                        <span class="px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300">${esc(a.category)}</span>
+                        <span class="text-gray-400">conf: ${((a.confidence || 0) * 100).toFixed(0)}%</span>
+                        ${ocrCount > 0 ? '<span class="text-blue-500 dark:text-blue-400">' + ocrCount + ' OCR</span>' : ''}
+                    </div>`;
+                }
+                html += '</div>';
+            }
+
+            html += '</div>';
+        }
+
+        container.innerHTML = html;
+    } catch (e) {
+        document.getElementById('corrections-list').innerHTML =
+            '<p class="text-sm text-red-400">Failed to load: ' + e.message + '</p>';
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadRecentCorrections);
+</script>
 {% endblock %}
