@@ -67,18 +67,25 @@ def train_with_mlx(config: TrainingConfig) -> dict:
     logger.info("Loading model: %s", config.model_name)
     model, tokenizer = load(config.model_name)
 
-    # Load datasets
-    train_set, valid_set = load_dataset(data=str(config.data_dir), tokenizer=tokenizer)
+    # Load datasets — mlx-lm expects a namespace with .data attribute
+    from types import SimpleNamespace
+    dataset_args = SimpleNamespace(
+        data=str(config.data_dir),
+        hf_dataset=False,
+        train=True,
+        test=False,
+    )
+    train_set, valid_set, _ = load_dataset(dataset_args, tokenizer)
 
-    # Training args
+    # Training args (mlx-lm current API)
+    adapter_file = str(config.adapter_path / "adapters.safetensors")
     training_args = TrainingArgs(
         batch_size=config.batch_size,
         iters=config.iterations,
-        learning_rate=config.learning_rate,
         steps_per_report=config.steps_per_report,
         steps_per_eval=config.steps_per_eval,
-        val_batches=config.val_batches,
-        adapter_path=str(config.adapter_path),
+        steps_per_save=config.iterations,  # Save at end
+        adapter_file=adapter_file,
         grad_checkpoint=config.grad_checkpoint,
     )
 
@@ -91,16 +98,23 @@ def train_with_mlx(config: TrainingConfig) -> dict:
         }
     }
 
+    # Apply LoRA layers to model
+    from mlx_lm.tuner.utils import linear_to_lora_layers
+    linear_to_lora_layers(model, config.lora_layers, lora_config["lora_parameters"])
+
+    # Create optimizer
+    import mlx.optimizers as optim
+    optimizer = optim.Adam(learning_rate=config.learning_rate)
+
     # Train
+    config.adapter_path.mkdir(parents=True, exist_ok=True)
     start_time = time.time()
     lora_train(
         model=model,
-        tokenizer=tokenizer,
-        args=training_args,
+        optimizer=optimizer,
         train_dataset=train_set,
         val_dataset=valid_set,
-        lora_layers=config.lora_layers,
-        lora_parameters=lora_config["lora_parameters"],
+        args=training_args,
     )
     duration = time.time() - start_time
 
