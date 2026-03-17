@@ -270,11 +270,7 @@ This roadmap is designed so that each phase can be reflected directly in the Git
 
 ## References
 
-1. [Sanuka_Alles_w1953887_20210985_IPD.pdf](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/56820611/a97cdde3-883e-4c63-a447-5d874afd7ac1/Sanuka_Alles_w1953887_20210985_IPD.pdf?AWSAccessKeyId=ASIA2F3EMEYEVRCA6E6G&Signature=pjZpchIVpD7xbG2N3cF09FhFGPY%3D&x-amz-security-token=IQoJb3JpZ2luX2VjEBUaCXVzLWVhc3QtMSJHMEUCIBxTFFShi8t%2Fb2mjU8m83%2F1uRaBZV%2FgBM%2BBsiLV2kNe5AiEAoDYn%2FhixsAakJtmdrzjftnDMNzbkORqoBdi00csFtOYq%2FAQI3v%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARABGgw2OTk3NTMzMDk3MDUiDNMhf2Fvkw3VaZE4pyrQBOryZOUbEVhUXeTuYZ9trSutDankz89WaWp3lBuHR5lyZc%2BVp53ga927qLnOT66S6fZkWdZmDuxgfLwQestirOwekJr%2Bcz1%2BIhaHBvrGV%2BmjnHAzlRceWQp%2BZ6IFh55jqXJm2RFkcM60kC4ch%2FRGNMvT%2Bonmu%2BF5uSIIy8xJ%2Fn0WeDgQ0sdIxaxu5I5kwaPJqwsZ58TPaxMMzaY1JHEBtpq2yHKk%2B7FIxXQRKX37ItXzveZ%2FY9nFoBP2%2FCyrTBiXzIR54mNTQI1mTOQaAWav8XmwIOsEloIMilm%2FKwuxNL5SL1VUIuJfoDzcJ8m%2Bmpnw0RCD9CnOgPtt5y3rrjcl%2FTfI6SEuArjuHuEDw8HFQnE7D8jwanIsmFKZU1EtGI0cYjBQcYyAyq7R4R1fA2XVpiFo%2B0NkOFzjnhLOMlqDKi9Tu4KFxvfwaYyfP9KeM5VJRnfCkT8oDlOLm21qx7oYk0eob3aoaQx7xRM9KGedqaUEC0Ejnguy%2B7XnEYa3lZTNqFL7IXCA4heS0f2%2Fd0EFv%2Fws4IAA6xo7hSbpjht22fAiWAKFZzk1fjzu%2FsYtzYylGaBQxliOfm%2B5SflF%2BCFK9ENvXrIcniKczC22VJLoXI9nClypgCC6mdk5L1uucCacYWtsta90mUMHBRrevHfU2uKpEzYhKiDcNNRif%2Fuegqtv3viIk05Pn7OXKd4l3Xp6vBCvbdMK%2FDtZW062IeCHFMC%2Bassw4QnKpv1550VDvhcq57XBCsGEX2CE2InEhmjXsjdL1hFxq6rVBFGk2G2izbAwjs3hzQY6mAHexAe0ZO5PBB7ewSTIcILV0Z8LuSVRFp%2BWm8K4jXpqGwGV23HYmBKnUp9AJWX36mjcrNTIAYo0Pn2VVr1VUMLr56gp84JyLG12vkxYSUeU%2FSdVbD1CTMvhm7o%2FV%2BWMSzNiwjOJ6UDVGBixFEtx5kRUwAvjDHfGnf%2FFVquwl9ozmKms9t%2FnpBaJoRjmCqZCRo%2F6n4UfkUczpA%3D%3D&Expires=1773696097) - INFORMATICS INSTITUTE OF TECHNOLOGY 
-In Collaboration with 
-UNIVERSITY OF WESTMINSTER 
- 
-Multimodal ...
+1. Sanuka Alles - IPD Report: Multimodal ASR Error Correction System - Informatics Institute of Technology / University of Westminster
 
 2. [Qwen2.5-VL-7B](https://en.immers.cloud/ai/Qwen/qwen2.5-vl-7b/) - Rent GPU servers for hosting Qwen2.5-VL-7B. Cloud and dedicated GPU servers for rent.
 
