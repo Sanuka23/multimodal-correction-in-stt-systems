@@ -77,42 +77,69 @@ def _get_pipeline(model_dir: Optional[str] = None, device: str = "cpu"):
             sys.path.insert(0, avsr_dir)
 
         try:
-            from pipelines.pipeline import InferencePipeline
+            import argparse
+            import torch
+            import torchvision
+            from lightning import ModelModule
+            from datamodule.transforms import VideoTransform
+            from preparation.detectors.mediapipe.detector import LandmarksDetector
+            from preparation.detectors.mediapipe.video_process import VideoProcess
 
-            # Find VSR config file
-            config_dir = os.path.join(avsr_dir, "configs")
-            vsr_config = None
-            for name in ["LRS3_V_WER19.1.ini", "LRS3_V_WER20.3.ini"]:
-                candidate = os.path.join(config_dir, name)
+            # Find model weights
+            model_path = None
+            for name in [
+                "benchmarks/LRS3/models/vsr_trlrs2lrs3vox2avsp_base.pth",
+                "benchmarks/LRS3/models/vsr_trlrs3vox2_base.pth",
+                "benchmarks/LRS3/models/vsr_trlrs3_base.pth",
+            ]:
+                candidate = os.path.join(avsr_dir, name)
                 if os.path.exists(candidate):
-                    vsr_config = candidate
+                    model_path = candidate
                     break
 
-            if vsr_config is None:
-                # Try any .ini file with "V" (visual) in the name
-                for f in os.listdir(config_dir):
-                    if f.endswith(".ini") and "_V_" in f:
-                        vsr_config = os.path.join(config_dir, f)
-                        break
-
-            if vsr_config is None:
-                logger.error("No VSR config found in %s", config_dir)
+            if model_path is None:
+                logger.error("No VSR model weights found in %s/benchmarks/LRS3/models/", avsr_dir)
                 return None
 
-            logger.info("Using VSR config: %s", vsr_config)
-            _pipeline = InferencePipeline(
-                vsr_config,
-                device=device,
-                face_track=True,
-                detector="mediapipe",
-            )
+            logger.info("Loading VSR model: %s", model_path)
+
+            # Build inline InferencePipeline (same as tutorial notebook)
+            class _InferencePipeline(torch.nn.Module):
+                def __init__(self, ckpt_path):
+                    super().__init__()
+                    self.landmarks_detector = LandmarksDetector()
+                    self.video_process = VideoProcess(convert_gray=False)
+                    self.video_transform = VideoTransform(subset="test")
+
+                    parser = argparse.ArgumentParser()
+                    args, _ = parser.parse_known_args(args=[])
+                    setattr(args, "modality", "video")
+
+                    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+                    self.modelmodule = ModelModule(args)
+                    self.modelmodule.model.load_state_dict(ckpt)
+                    self.modelmodule.eval()
+
+                def forward(self, data_filename):
+                    data_filename = os.path.abspath(data_filename)
+                    video = torchvision.io.read_video(data_filename, pts_unit="sec")[0].numpy()
+                    landmarks = self.landmarks_detector(video)
+                    video = self.video_process(video, landmarks)
+                    video = torch.tensor(video)
+                    video = video.permute((0, 3, 1, 2))
+                    video = self.video_transform(video)
+                    with torch.no_grad():
+                        transcript = self.modelmodule(video)
+                    return transcript
+
+            _pipeline = _InferencePipeline(model_path)
             logger.info("Auto-AVSR pipeline loaded successfully")
             return _pipeline
 
         except ImportError as e:
             logger.error(
                 "Failed to import Auto-AVSR: %s. "
-                "Install dependencies: pip install pytorch-lightning sentencepiece av",
+                "Install dependencies: pip install pytorch-lightning sentencepiece av torchvision",
                 e,
             )
             return None
@@ -185,13 +212,14 @@ class AutoAVSRProvider:
                 start_s, end_s,
             )
 
-            # Process landmarks (face detection + alignment)
-            landmarks = pipeline.process_landmarks(
-                clip_path, landmarks_filename=None
-            )
+            # Run the full pipeline: video → face detection → lip reading → text
+            transcript = pipeline(clip_path)
 
-            if landmarks is None:
-                logger.info("No face detected in segment [%.1f-%.1fs]", start_s, end_s)
+            if not transcript or not str(transcript).strip():
+                logger.info(
+                    "Auto-AVSR returned empty transcript for [%.1f-%.1fs]",
+                    start_s, end_s,
+                )
                 return AVSRHint(
                     face_detected=False,
                     speaking_confidence=0.0,
@@ -199,25 +227,7 @@ class AutoAVSRProvider:
                     mode="auto_avsr",
                 )
 
-            # Load data (mouth ROI extraction + preprocessing)
-            data = pipeline.dataloader.load_data(clip_path, landmarks)
-
-            # Run visual speech recognition inference
-            transcript = pipeline.model.infer(data)
-
-            if not transcript or not transcript.strip():
-                logger.info(
-                    "Auto-AVSR returned empty transcript for [%.1f-%.1fs]",
-                    start_s, end_s,
-                )
-                return AVSRHint(
-                    face_detected=True,
-                    speaking_confidence=0.3,
-                    lip_transcript=None,
-                    mode="auto_avsr",
-                )
-
-            transcript = transcript.strip()
+            transcript = str(transcript).strip()
             logger.info(
                 "Auto-AVSR transcript [%.1f-%.1fs]: '%s'",
                 start_s, end_s, transcript[:100],
