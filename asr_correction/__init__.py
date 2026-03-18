@@ -20,6 +20,7 @@ Usage:
 import logging
 import time
 
+from .batch_corrector import correct_transcript_batch
 from .config import CorrectionConfig
 from .corrector import correct_candidates
 from .data_collector import collect_correction_data
@@ -27,7 +28,7 @@ from .segment_selector import select_segments
 from .types import CorrectionReport
 from .vocabulary import load_domain_vocab, merge_vocabularies
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
 
 logger = logging.getLogger(__name__)
 
@@ -148,13 +149,15 @@ def correct_transcript(
     else:
         logger.info("Step 3: No video URL or OCR provider — skipping OCR")
 
-    # Step 4: Correct candidates with model
-    logger.info("Step 4: Correcting %d candidates (dry_run=%s)...", len(candidates), config.dry_run)
-    enhanced, report = correct_candidates(
-        candidates, transcript, file_id, targeted_ocr_provider, config
+    # Step 4: Batch correction — send whole transcript chunks to model
+    logger.info("Step 4: Batch correction (whole transcript, not word-by-word)...")
+    enhanced, report = correct_transcript_batch(
+        transcript, file_id, vocab_terms,
+        ocr_provider=targeted_ocr_provider,
+        config=config,
     )
-    logger.info("Step 4 complete: %d/%d corrections applied",
-                report.corrections_applied, report.corrections_attempted)
+    logger.info("Step 4 complete: %d corrections applied in %.0fms",
+                report.corrections_applied, report.processing_time_ms)
 
     # Step 5: AVSR pass on flagged segments
     avsr_needs = [a for a in flagged if a.needs_avsr]
