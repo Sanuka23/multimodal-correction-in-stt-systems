@@ -1,6 +1,6 @@
 {
-  "completed_at": "2026-03-18T00:01:39.882636",
-  "duration_seconds": 9054.86,
+  "completed_at": "2026-03-18T14:59:42.459239",
+  "duration_seconds": 9571.0,
   "config": {
     "model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
     "batch_size": 4,
@@ -11,7 +11,7 @@
     "grad_checkpoint": true
   },
   "data": {
-    "train_examples": 37830,
-    "valid_examples": 6676
+    "train_examples": 45776,
+    "valid_examples": 8079
   }
 }

@@ -82,15 +82,24 @@ def _plausibility_score(error_word: str, term: str) -> tuple[float, list[str]]:
             reasons.append(f"substring_penalty:diff={len_diff}")
             return 0.05, reasons  # Very low score — almost certainly false positive
 
-    # --- PENALTY: Large length difference ---
-    # ASR errors don't change word length dramatically.
-    # "quadrant"(8) vs "Qdrant"(6) = diff 2, OK
-    # "and"(3) vs "Andre"(5) = diff 2 but ratio 0.6, borderline
-    # "or"(2) vs "OCR"(3) = diff 1 but ratio 0.67, too short
+    # --- PENALTY: Short words ---
+    # Short common words match too many vocab terms by coincidence.
+    # Apply strict rules based on word length:
     len_ratio = min(len(e), len(t)) / max(len(e), len(t))
-    if len(e) <= 3 and len_ratio < 0.75:
-        reasons.append(f"short_word_penalty:len={len(e)},ratio={len_ratio:.2f}")
-        return 0.1, reasons  # Short word with significant length diff = false positive
+    edit_dist = jellyfish.levenshtein_distance(e, t)
+
+    if len(e) <= 3:
+        # Very short words (≤3 chars): ONLY accept exact match or plural
+        # "rag"→"RAG" OK, "LLM"→"LLMs" OK, "but"→"Bud" REJECT
+        if edit_dist > 0 and not (t.startswith(e) and len(t) - len(e) <= 1):
+            reasons.append(f"very_short_word:len={len(e)},edit={edit_dist}")
+            return 0.05, reasons
+    elif len(e) <= 4:
+        # Short words (4 chars): allow edit distance 1 only if same length
+        # "data"→"ATLA" REJECT (edit=2), "rack"→"RAG" REJECT (diff length)
+        if edit_dist > 1 or len_ratio < 0.75:
+            reasons.append(f"short_word:len={len(e)},edit={edit_dist},ratio={len_ratio:.2f}")
+            return 0.1, reasons
 
     # Signal 1: Phonetic similarity via Metaphone (weight: 0.35)
     phonetic_score = 0.0
@@ -134,7 +143,7 @@ def _plausibility_score(error_word: str, term: str) -> tuple[float, list[str]]:
 
 
 # Minimum plausibility to treat (error, term) as a real ASR error
-PLAUSIBILITY_THRESHOLD = 0.45
+PLAUSIBILITY_THRESHOLD = 0.65
 
 
 @dataclass
