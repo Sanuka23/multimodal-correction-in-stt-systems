@@ -35,6 +35,31 @@ LOW_CONFIDENCE_THRESHOLD = 0.7
 # Fuzzy match ratio above this means word is similar to a vocab term
 FUZZY_MATCH_THRESHOLD = 75
 
+# Common English words that should NEVER be treated as ASR errors.
+# These frequently appear as known_errors for vocab terms (e.g., "and" for "Andre")
+# but replacing them would destroy the transcript.
+COMMON_WORDS_BLOCKLIST = {
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "do", "for",
+    "from", "go", "had", "has", "have", "he", "her", "him", "his", "how", "i",
+    "if", "in", "is", "it", "its", "just", "let", "may", "me", "my", "no",
+    "not", "of", "on", "or", "our", "out", "own", "say", "she", "so", "some",
+    "than", "that", "the", "them", "then", "there", "they", "this", "to", "too",
+    "up", "us", "was", "we", "what", "when", "who", "will", "with", "would",
+    "you", "your", "all", "also", "any", "been", "both", "each", "few", "get",
+    "got", "here", "into", "like", "log", "make", "many", "more", "most", "much",
+    "new", "now", "old", "one", "only", "other", "over", "put", "see", "set",
+    "still", "such", "take", "tell", "time", "try", "two", "use", "very", "way",
+    "well", "work", "another", "about", "after", "again", "back", "before",
+    "being", "between", "come", "could", "day", "did", "down", "even", "every",
+    "find", "first", "give", "good", "great", "hand", "help", "high", "home",
+    "house", "keep", "kind", "know", "last", "left", "life", "long", "look",
+    "made", "man", "mean", "men", "might", "move", "much", "must", "name",
+    "need", "never", "next", "number", "off", "once", "open", "part", "people",
+    "place", "point", "right", "run", "same", "should", "show", "side", "small",
+    "start", "state", "thing", "think", "those", "three", "through", "turn",
+    "under", "want", "water", "week", "where", "while", "why", "world", "year",
+}
+
 
 @dataclass
 class SegmentAnalysis:
@@ -92,6 +117,10 @@ def _score_word(
     w_lower = word.lower().strip(".,!?;:'\"()[]")
 
     if not w_lower or len(w_lower) < 2:
+        return 0.0, [], None
+
+    # Block common English words — these should never be "corrected"
+    if w_lower in COMMON_WORDS_BLOCKLIST:
         return 0.0, [], None
 
     # Signal 1: Known error exact match (+5)

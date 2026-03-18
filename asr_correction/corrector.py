@@ -48,6 +48,31 @@ def identify_candidates(
 
     candidates = []
 
+    # Common words that should never be treated as ASR errors
+    common_blocklist = {
+        "a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "do",
+        "for", "from", "go", "had", "has", "have", "he", "her", "him", "his",
+        "how", "i", "if", "in", "is", "it", "its", "just", "let", "may", "me",
+        "my", "no", "not", "of", "on", "or", "our", "out", "own", "say", "she",
+        "so", "some", "than", "that", "the", "them", "then", "there", "they",
+        "this", "to", "too", "up", "us", "was", "we", "what", "when", "who",
+        "will", "with", "would", "you", "your", "all", "also", "any", "been",
+        "both", "each", "few", "get", "got", "here", "into", "like", "log",
+        "make", "many", "more", "most", "much", "new", "now", "old", "one",
+        "only", "other", "over", "put", "see", "set", "still", "such", "take",
+        "tell", "time", "try", "two", "use", "very", "way", "well", "work",
+        "another", "about", "after", "again", "back", "before", "being",
+        "between", "come", "could", "day", "did", "down", "even", "every",
+        "find", "first", "give", "good", "great", "hand", "help", "high",
+        "home", "house", "keep", "kind", "know", "last", "left", "life",
+        "long", "look", "made", "man", "mean", "men", "might", "move",
+        "must", "name", "need", "never", "next", "number", "off", "once",
+        "open", "part", "people", "place", "point", "right", "run", "same",
+        "should", "show", "side", "small", "start", "state", "thing", "think",
+        "those", "three", "through", "turn", "under", "want", "water",
+        "week", "where", "while", "why", "world", "year",
+    }
+
     for term_info in vocab_terms:
         term = term_info["term"]
         category = term_info["category"]
@@ -57,6 +82,9 @@ def identify_candidates(
             continue
 
         for err in known_errors:
+            # Skip common English words that would match everywhere
+            if err.lower().strip(".,!?;:'\"()[] ") in common_blocklist:
+                continue
             err_positions = find_occurrences(full_text, err)
             for pos_start, pos_end in err_positions:
                 # Skip if the correct term is actually at this position
@@ -190,10 +218,9 @@ def correct_candidates(
                 logger.info("  Decision: Force-apply — error '%s' still in model output, term '%s' absent",
                              candidate.error_found, candidate.term)
             elif confidence < config.confidence_threshold:
-                # Neither found clearly, model unsure → force apply
-                should_apply = True
-                changes = [f"{candidate.error_found} → {candidate.term}"]
-                logger.info("  Decision: Force-apply — model unsure (confidence=%.2f)", confidence)
+                # Model unsure (low confidence, no clear output) → SKIP
+                # Do NOT force-apply when the model can't confirm the error
+                logger.info("  Decision: SKIP — model unsure (confidence=%.2f), not applying", confidence)
             else:
                 # Model confident, term not found but error also gone → trust model
                 logger.info("  Decision: SKIP — model confident, error resolved (confidence=%.2f)", confidence)
