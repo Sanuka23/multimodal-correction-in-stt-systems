@@ -48,30 +48,8 @@ def identify_candidates(
 
     candidates = []
 
-    # Common words that should never be treated as ASR errors
-    common_blocklist = {
-        "a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "do",
-        "for", "from", "go", "had", "has", "have", "he", "her", "him", "his",
-        "how", "i", "if", "in", "is", "it", "its", "just", "let", "may", "me",
-        "my", "no", "not", "of", "on", "or", "our", "out", "own", "say", "she",
-        "so", "some", "than", "that", "the", "them", "then", "there", "they",
-        "this", "to", "too", "up", "us", "was", "we", "what", "when", "who",
-        "will", "with", "would", "you", "your", "all", "also", "any", "been",
-        "both", "each", "few", "get", "got", "here", "into", "like", "log",
-        "make", "many", "more", "most", "much", "new", "now", "old", "one",
-        "only", "other", "over", "put", "see", "set", "still", "such", "take",
-        "tell", "time", "try", "two", "use", "very", "way", "well", "work",
-        "another", "about", "after", "again", "back", "before", "being",
-        "between", "come", "could", "day", "did", "down", "even", "every",
-        "find", "first", "give", "good", "great", "hand", "help", "high",
-        "home", "house", "keep", "kind", "know", "last", "left", "life",
-        "long", "look", "made", "man", "mean", "men", "might", "move",
-        "must", "name", "need", "never", "next", "number", "off", "once",
-        "open", "part", "people", "place", "point", "right", "run", "same",
-        "should", "show", "side", "small", "start", "state", "thing", "think",
-        "those", "three", "through", "turn", "under", "want", "water",
-        "week", "where", "while", "why", "world", "year",
-    }
+    # Import plausibility scoring to filter false positives
+    from .segment_selector import _plausibility_score, PLAUSIBILITY_THRESHOLD
 
     for term_info in vocab_terms:
         term = term_info["term"]
@@ -82,8 +60,13 @@ def identify_candidates(
             continue
 
         for err in known_errors:
-            # Skip common English words that would match everywhere
-            if err.lower().strip(".,!?;:'\"()[] ") in common_blocklist:
+            # Multi-signal plausibility check: is this a plausible ASR error?
+            # Rejects "and"→"Andre" (low phonetic/edit similarity)
+            # Accepts "quadrant"→"Qdrant" (high phonetic/edit similarity)
+            plausibility, _ = _plausibility_score(err, term)
+            if plausibility < PLAUSIBILITY_THRESHOLD:
+                logger.debug("Skipping implausible error '%s'→'%s' (plausibility=%.2f)",
+                            err, term, plausibility)
                 continue
             err_positions = find_occurrences(full_text, err)
             for pos_start, pos_end in err_positions:
