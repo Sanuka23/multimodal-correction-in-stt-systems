@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+import jellyfish
 from rapidfuzz import fuzz, process
 
 from .types import CorrectionCandidate
@@ -29,36 +30,111 @@ OCR_ELIGIBLE_CATEGORIES = {"product_name", "tech_term", "feature", "metric", "br
 AVSR_ELIGIBLE_CATEGORIES = {"person_name", "content_word", "custom"}
 
 # Minimum suspicion score to flag a segment
-SEGMENT_FLAG_THRESHOLD = 3
-# ASR confidence below this is suspicious (but not conclusive)
+SEGMENT_FLAG_THRESHOLD = 3.0
+# ASR confidence below this adds to suspicion (but is NOT conclusive alone)
 LOW_CONFIDENCE_THRESHOLD = 0.7
-# Fuzzy match ratio above this means word is similar to a vocab term
-FUZZY_MATCH_THRESHOLD = 75
 
-# Common English words that should NEVER be treated as ASR errors.
-# These frequently appear as known_errors for vocab terms (e.g., "and" for "Andre")
-# but replacing them would destroy the transcript.
-COMMON_WORDS_BLOCKLIST = {
-    "a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "do", "for",
-    "from", "go", "had", "has", "have", "he", "her", "him", "his", "how", "i",
-    "if", "in", "is", "it", "its", "just", "let", "may", "me", "my", "no",
-    "not", "of", "on", "or", "our", "out", "own", "say", "she", "so", "some",
-    "than", "that", "the", "them", "then", "there", "they", "this", "to", "too",
-    "up", "us", "was", "we", "what", "when", "who", "will", "with", "would",
-    "you", "your", "all", "also", "any", "been", "both", "each", "few", "get",
-    "got", "here", "into", "like", "log", "make", "many", "more", "most", "much",
-    "new", "now", "old", "one", "only", "other", "over", "put", "see", "set",
-    "still", "such", "take", "tell", "time", "try", "two", "use", "very", "way",
-    "well", "work", "another", "about", "after", "again", "back", "before",
-    "being", "between", "come", "could", "day", "did", "down", "even", "every",
-    "find", "first", "give", "good", "great", "hand", "help", "high", "home",
-    "house", "keep", "kind", "know", "last", "left", "life", "long", "look",
-    "made", "man", "mean", "men", "might", "move", "much", "must", "name",
-    "need", "never", "next", "number", "off", "once", "open", "part", "people",
-    "place", "point", "right", "run", "same", "should", "show", "side", "small",
-    "start", "state", "thing", "think", "those", "three", "through", "turn",
-    "under", "want", "water", "week", "where", "while", "why", "world", "year",
-}
+
+# ---------------------------------------------------------------------------
+# Multi-signal plausibility scoring
+# ---------------------------------------------------------------------------
+# Instead of a blocklist, every (error_word, vocab_term) pair is scored
+# across multiple signals. Only pairs with high plausibility become candidates.
+# This prevents "and"→"Andre" while allowing "quadrant"→"Qdrant".
+
+def _plausibility_score(error_word: str, term: str) -> tuple[float, list[str]]:
+    """Score how plausible it is that `error_word` is an ASR error for `term`.
+
+    Returns (score 0.0-1.0, list of reason strings).
+    Higher = more likely a real ASR error.
+
+    Key insight: ASR errors produce words of SIMILAR length and sound.
+    "quadrant"→"Qdrant" is plausible (similar length, same sound).
+    "and"→"Andre" is NOT (short word is just a prefix of the term).
+
+    Signals:
+      1. Phonetic similarity (Metaphone)
+      2. Normalized edit distance
+      3. Word length ratio — heavily penalize large length differences
+      4. Substring penalty — if error is a prefix/substring of term, penalize
+    """
+    e = error_word.lower().strip(".,!?;:'\"()[]")
+    t = term.lower()
+
+    if not e or not t:
+        return 0.0, []
+
+    # Identical words → perfect score (already correct)
+    if e == t:
+        return 1.0, ["exact_match"]
+
+    score = 0.0
+    reasons = []
+
+    # --- PENALTY: Substring/prefix check ---
+    # If the error word is just a prefix or substring of the term,
+    # it's almost certainly a common word, not an ASR error.
+    # e.g., "and" is a prefix of "Andre", "can" is a prefix of "Canva"
+    if t.startswith(e) or e.startswith(t):
+        # Only a real error if the words are very similar in length
+        len_diff = abs(len(e) - len(t))
+        if len_diff > 1:
+            reasons.append(f"substring_penalty:diff={len_diff}")
+            return 0.05, reasons  # Very low score — almost certainly false positive
+
+    # --- PENALTY: Large length difference ---
+    # ASR errors don't change word length dramatically.
+    # "quadrant"(8) vs "Qdrant"(6) = diff 2, OK
+    # "and"(3) vs "Andre"(5) = diff 2 but ratio 0.6, borderline
+    # "or"(2) vs "OCR"(3) = diff 1 but ratio 0.67, too short
+    len_ratio = min(len(e), len(t)) / max(len(e), len(t))
+    if len(e) <= 3 and len_ratio < 0.75:
+        reasons.append(f"short_word_penalty:len={len(e)},ratio={len_ratio:.2f}")
+        return 0.1, reasons  # Short word with significant length diff = false positive
+
+    # Signal 1: Phonetic similarity via Metaphone (weight: 0.35)
+    phonetic_score = 0.0
+    try:
+        e_metaphone = jellyfish.metaphone(e)
+        t_metaphone = jellyfish.metaphone(t)
+        if e_metaphone and t_metaphone:
+            # Full metaphone comparison using edit distance on codes
+            meta_dist = jellyfish.levenshtein_distance(e_metaphone, t_metaphone)
+            meta_max = max(len(e_metaphone), len(t_metaphone))
+            phonetic_score = 1.0 - (meta_dist / meta_max if meta_max > 0 else 1.0)
+            if phonetic_score > 0.3:
+                score += 0.35 * phonetic_score
+                reasons.append(f"phonetic:{e_metaphone}≈{t_metaphone}({phonetic_score:.2f})")
+    except Exception:
+        pass
+
+    # Signal 2: Normalized edit distance (weight: 0.30)
+    edit_dist = jellyfish.levenshtein_distance(e, t)
+    max_len = max(len(e), len(t))
+    edit_similarity = 1.0 - (edit_dist / max_len if max_len > 0 else 1.0)
+    if edit_similarity > 0.4:
+        score += 0.30 * edit_similarity
+        reasons.append(f"edit_sim:{edit_similarity:.2f}")
+
+    # Signal 3: Word length ratio (weight: 0.20)
+    if len_ratio >= 0.65:
+        score += 0.20 * len_ratio
+        reasons.append(f"len_ratio:{len_ratio:.2f}")
+
+    # Signal 4: Character overlap (weight: 0.15)
+    e_chars = set(e)
+    t_chars = set(t)
+    if e_chars | t_chars:
+        char_overlap = len(e_chars & t_chars) / len(e_chars | t_chars)
+        if char_overlap >= 0.4:
+            score += 0.15 * char_overlap
+            reasons.append(f"char_overlap:{char_overlap:.2f}")
+
+    return score, reasons
+
+
+# Minimum plausibility to treat (error, term) as a real ASR error
+PLAUSIBILITY_THRESHOLD = 0.45
 
 
 @dataclass
@@ -107,7 +183,11 @@ def _score_word(
     probability: float,
     lookup: dict,
 ) -> tuple[float, list[str], Optional[dict]]:
-    """Score a single word for suspicion.
+    """Score a single word for suspicion using multi-signal plausibility.
+
+    Instead of a blocklist, every (word, vocab_term) pair is scored for
+    phonetic similarity, edit distance, length ratio, and character overlap.
+    Only plausible matches become candidates.
 
     Returns (score, reasons, matched_term_info).
     """
@@ -119,38 +199,50 @@ def _score_word(
     if not w_lower or len(w_lower) < 2:
         return 0.0, [], None
 
-    # Block common English words — these should never be "corrected"
-    if w_lower in COMMON_WORDS_BLOCKLIST:
-        return 0.0, [], None
-
-    # Signal 1: Known error exact match (+5)
+    # Signal 1: Known error exact match — but verify plausibility
     if w_lower in lookup["errors"]:
-        score += 5
-        matched_term = lookup["errors"][w_lower]
-        reasons.append(f"known_error:{matched_term['term']}")
+        term_info = lookup["errors"][w_lower]
+        plausibility, plaus_reasons = _plausibility_score(w_lower, term_info["term"])
 
-    # Signal 2: Fuzzy match to vocab term (+3)
+        if plausibility >= PLAUSIBILITY_THRESHOLD:
+            # Plausible ASR error (e.g., "quadrant"→"Qdrant")
+            score += 5
+            matched_term = term_info
+            reasons.append(f"known_error:{term_info['term']}(plaus={plausibility:.2f})")
+            reasons.extend(plaus_reasons)
+        else:
+            # Implausible match (e.g., "and"→"Andre") — skip
+            logger.debug("Rejected known_error '%s'→'%s' (plausibility=%.2f < %.2f)",
+                        w_lower, term_info["term"], plausibility, PLAUSIBILITY_THRESHOLD)
+
+    # Signal 2: Fuzzy match to vocab term — with plausibility check
     if not matched_term and lookup["all_terms"]:
         matches = process.extract(
             w_lower, [t.lower() for t in lookup["all_terms"]],
-            scorer=fuzz.ratio, limit=1, score_cutoff=FUZZY_MATCH_THRESHOLD,
+            scorer=fuzz.ratio, limit=3, score_cutoff=60,
         )
-        if matches:
-            match_term_lower, match_score, _ = matches[0]
-            # Don't flag if it's an exact match (term is already correct)
-            if match_term_lower != w_lower:
-                matched_term = lookup["terms"].get(match_term_lower)
-                score += 3
-                reasons.append(f"vocab_near_miss:{match_term_lower}(score={match_score})")
+        for match_term_lower, match_score, _ in (matches or []):
+            if match_term_lower == w_lower:
+                continue  # Already correct
+            term_info = lookup["terms"].get(match_term_lower)
+            if not term_info:
+                continue
 
-    # Signal 3: Low ASR confidence (+2)
+            plausibility, plaus_reasons = _plausibility_score(w_lower, term_info["term"])
+            if plausibility >= PLAUSIBILITY_THRESHOLD:
+                matched_term = term_info
+                score += 3
+                reasons.append(f"vocab_near_miss:{match_term_lower}(plaus={plausibility:.2f})")
+                reasons.extend(plaus_reasons)
+                break  # Use first plausible match
+
+    # Signal 3: Low ASR confidence (+2) — only adds to score, never standalone
     if probability < LOW_CONFIDENCE_THRESHOLD:
         score += 2
         reasons.append(f"low_confidence:{probability:.2f}")
 
-    # Signal 4: Proper noun near vocab term (+2)
+    # Signal 4: Proper noun near vocab term — with plausibility check
     if word[0].isupper() and len(word) > 1 and not matched_term:
-        # Check if this capitalized word is similar to any vocab term
         matches = process.extract(
             w_lower, [t.lower() for t in lookup["all_terms"]],
             scorer=fuzz.ratio, limit=1, score_cutoff=60,
@@ -158,9 +250,14 @@ def _score_word(
         if matches:
             match_term_lower, match_score, _ = matches[0]
             if match_term_lower != w_lower:
-                matched_term = lookup["terms"].get(match_term_lower)
-                score += 2
-                reasons.append(f"proper_noun_near_vocab:{match_term_lower}")
+                term_info = lookup["terms"].get(match_term_lower)
+                if term_info:
+                    plausibility, plaus_reasons = _plausibility_score(w_lower, term_info["term"])
+                    if plausibility >= PLAUSIBILITY_THRESHOLD:
+                        matched_term = term_info
+                        score += 2
+                        reasons.append(f"proper_noun:{match_term_lower}(plaus={plausibility:.2f})")
+                        reasons.extend(plaus_reasons)
 
     return score, reasons, matched_term
 
