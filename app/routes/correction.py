@@ -85,7 +85,7 @@ async def asr_correct(
     })
 
     try:
-        # Resolve OCR data: cached XML > video URL extraction > none
+        # Check for pre-existing OCR (provided or cached)
         ocr_provider = None
         ocr_xml_data = request.ocr_xml
 
@@ -95,74 +95,34 @@ async def asr_correct(
         if ocr_xml_data:
             logger.info("OCR: Using provided ocr_xml (%d chars)", len(ocr_xml_data))
         elif request.video_url:
-            # Check dashboard DB cache first
             cached = await get_cached_ocr(request.file_id)
             if cached:
-                logger.info("OCR: Using cached OCR from dashboard DB for file_id=%s (%d chars)", request.file_id, len(cached))
+                logger.info("OCR: Using cached OCR from dashboard DB (%d chars)", len(cached))
                 ocr_xml_data = cached
             else:
-                logger.info("OCR: No cache found, attempting extraction from video_url")
-                from asr_correction.ocr_extractor import extract_ocr_from_video
-                from asr_correction.config import CorrectionConfig as _CConfig
-                _ocr_cfg = _CConfig()
-                try:
-                    extracted = await extract_ocr_from_video(
-                        request.video_url,
-                        interval_s=_ocr_cfg.ocr_frame_interval_s,
-                        max_frames=_ocr_cfg.ocr_max_frames,
-                        min_confidence=_ocr_cfg.ocr_min_confidence,
-                        dedup_threshold=_ocr_cfg.ocr_dedup_threshold,
-                    )
-                    if extracted:
-                        await cache_ocr_result(request.file_id, extracted)
-                        ocr_xml_data = extracted
-                        logger.info("OCR: Extraction successful, cached result (%d chars)", len(extracted))
-                    else:
-                        logger.info("OCR: Extraction returned None (stub/unavailable)")
-                except Exception as ocr_err:
-                    logger.warning("OCR: Extraction failed: %s", ocr_err)
-        else:
-            logger.info("OCR: No ocr_xml or video_url provided — running without OCR context")
+                logger.info("OCR: No cache — will use targeted extraction after segment selection")
 
         ocr_duration_ms = (time.time() - ocr_step_start) * 1000
-
-        # Parse OCR XML to extract readable text samples for dashboard display
-        ocr_output_samples = []
-        if ocr_xml_data:
-            try:
-                from asr_correction.ocr_parser import parse_ocr_xml
-                ocr_frames = parse_ocr_xml(ocr_xml_data)
-                for frame in ocr_frames[:20]:  # Show up to 20 frames
-                    ocr_output_samples.append({
-                        "timestamp": frame.get("timestamp", ""),
-                        "text": frame.get("text", "")[:200],  # Truncate long text
-                    })
-            except Exception:
-                pass
-
-        await update_job_step(job_id, "ocr_extraction", "completed", duration_ms=ocr_duration_ms, details={
-            "has_ocr": bool(ocr_xml_data),
-            "ocr_chars": len(ocr_xml_data) if ocr_xml_data else 0,
-            "source": "provided" if request.ocr_xml else ("cached" if ocr_xml_data and not request.ocr_xml else "extracted"),
-            "frames_with_text": len(ocr_output_samples),
-            "samples": ocr_output_samples,
-        })
-
-        # Initialize AVSR provider early so we can set step status
-        from asr_correction.avsr import get_avsr_provider
-        _avsr_config = CorrectionConfig(dry_run=False)
-        avsr_provider = get_avsr_provider(_avsr_config.avsr_mode, model_dir=_avsr_config.avsr_model_dir)
-        video_url_for_avsr = request.video_url if avsr_provider else None
-
-        await update_job_step(job_id, "avsr_extraction", "pending" if avsr_provider else "skipped", details={
-            "mode": _avsr_config.avsr_mode if avsr_provider else "disabled",
-            "reason": "Waiting for Pass 1 to identify segments" if avsr_provider else "AVSR disabled",
-        })
 
         if ocr_xml_data:
             def ocr_callback(file_id: str, start_time: float, end_time: float):
                 return ocr_xml_data
             ocr_provider = ocr_callback
+
+        await update_job_step(job_id, "ocr_extraction", "completed", duration_ms=ocr_duration_ms, details={
+            "has_ocr": bool(ocr_xml_data),
+            "ocr_chars": len(ocr_xml_data) if ocr_xml_data else 0,
+            "source": "provided" if request.ocr_xml else ("cached" if ocr_xml_data else "targeted"),
+        })
+
+        # Initialize AVSR provider
+        from asr_correction.avsr import get_avsr_provider
+        _avsr_config = CorrectionConfig(dry_run=False)
+        avsr_provider = get_avsr_provider(_avsr_config.avsr_mode, model_dir=_avsr_config.avsr_model_dir)
+
+        await update_job_step(job_id, "avsr_extraction", "pending" if avsr_provider else "skipped", details={
+            "mode": _avsr_config.avsr_mode if avsr_provider else "disabled",
+        })
 
         # Parse custom vocabulary
         await update_job_step(job_id, "vocab_merge", "running")
@@ -183,10 +143,10 @@ async def asr_correct(
             "custom_terms": len(vocab) if vocab else 0
         })
 
-        # Run correction in thread pool (blocking ML inference)
+        # Run two-stage correction pipeline (selector → targeted OCR → correction)
         await update_job_step(job_id, "candidate_detection", "running")
         await update_job_step(job_id, "ml_inference", "running")
-        logger.info("Starting ML correction pipeline...")
+        logger.info("Starting two-stage correction pipeline...")
         inference_start = time.time()
 
         def _run_correction():
@@ -196,7 +156,7 @@ async def asr_correct(
                 custom_vocabulary=vocab,
                 ocr_provider=ocr_provider,
                 avsr_provider=avsr_provider,
-                video_url=video_url_for_avsr,
+                video_url=request.video_url,
                 config=config,
             )
 
@@ -364,6 +324,7 @@ async def asr_correct(
                 "processing_time_ms": report.processing_time_ms,
                 "vocab_used": vocab_terms,
                 "corrections": corrections_detail,
+                "selector": getattr(report, "selector_info", {}),
             },
         }
 

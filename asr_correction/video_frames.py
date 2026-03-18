@@ -164,3 +164,63 @@ def extract_frames_periodic(
     )
 
     return frames
+
+
+def extract_frames_at_timestamps(
+    video_url: str,
+    timestamps: List[float],
+) -> List[ExtractedFrame]:
+    """Extract frames at specific timestamps using individual FFmpeg seeks.
+
+    Used for targeted OCR — extracts only frames at specified times
+    instead of the entire video. For small numbers of frames (< 50),
+    this is faster than extracting every frame from the full video.
+    """
+    if not timestamps:
+        return []
+
+    t0 = time.time()
+    frames = []
+    prev_hash = None
+
+    logger.info("Extracting %d frames at specific timestamps...", len(timestamps))
+
+    with tempfile.TemporaryDirectory(prefix="targeted_frames_") as tmpdir:
+        for idx, ts in enumerate(sorted(timestamps)):
+            output_path = os.path.join(tmpdir, f"frame_{idx:04d}.jpg")
+
+            cmd = [
+                "ffmpeg",
+                "-ss", str(ts),
+                "-i", video_url,
+                "-frames:v", "1",
+                "-q:v", "3",
+                "-loglevel", "quiet",
+                "-y",
+                output_path,
+            ]
+
+            try:
+                subprocess.run(cmd, capture_output=True, timeout=30)
+            except subprocess.TimeoutExpired:
+                logger.warning("FFmpeg timeout for frame at %.1fs", ts)
+                continue
+
+            if not os.path.exists(output_path):
+                continue
+
+            image = cv2.imread(output_path)
+            if image is None:
+                continue
+
+            # Dedup
+            img_hash = _compute_image_hash(image)
+            if prev_hash is not None and img_hash == prev_hash:
+                continue
+            prev_hash = img_hash
+
+            frames.append(ExtractedFrame(image=image, timestamp_s=ts))
+
+    total_time = time.time() - t0
+    logger.info("Targeted frame extraction: %d frames in %.1fs", len(frames), total_time)
+    return frames

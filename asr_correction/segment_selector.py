@@ -1,0 +1,365 @@
+"""Segment Selector — Two-layer analysis to identify which segments need correction.
+
+Layer 1: Fast rule-based scoring using vocab matching, ASR confidence, edit distance.
+Layer 2: Lightweight model check on flagged segments to catch high-confidence ASR errors.
+
+This replaces the old approach of processing OCR on the entire video upfront.
+Instead, we first identify ~5-20% of segments that actually need attention,
+then only fetch OCR/AVSR for those targeted time ranges.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+from rapidfuzz import fuzz, process
+
+from .types import CorrectionCandidate
+from .text_utils import estimate_timestamp_for_position, extract_context
+
+logger = logging.getLogger(__name__)
+
+# Categories where the term is likely visible on screen (slides, UI, code)
+OCR_ELIGIBLE_CATEGORIES = {"product_name", "tech_term", "feature", "metric", "brand", "tool"}
+# Categories where lip reading might help more than OCR
+AVSR_ELIGIBLE_CATEGORIES = {"person_name", "content_word", "custom"}
+
+# Minimum suspicion score to flag a segment
+SEGMENT_FLAG_THRESHOLD = 3
+# ASR confidence below this is suspicious (but not conclusive)
+LOW_CONFIDENCE_THRESHOLD = 0.7
+# Fuzzy match ratio above this means word is similar to a vocab term
+FUZZY_MATCH_THRESHOLD = 75
+
+
+@dataclass
+class SegmentAnalysis:
+    """Result of analyzing one transcript segment."""
+
+    segment_id: int
+    start: float
+    end: float
+    text: str
+    needs_correction: bool = False
+    needs_ocr: bool = False
+    needs_avsr: bool = False
+    candidates: List[CorrectionCandidate] = field(default_factory=list)
+    reasons: List[str] = field(default_factory=list)
+    rule_score: float = 0.0
+    model_confirmed: bool = False
+
+
+def _build_term_lookup(vocab_terms: List[dict]) -> dict:
+    """Build fast lookup structures from vocabulary.
+
+    Returns dict with:
+        terms: {lowered_term: term_info}
+        errors: {lowered_error: term_info}
+        all_terms: [term strings for fuzzy matching]
+    """
+    terms = {}
+    errors = {}
+    all_terms = []
+
+    for t in vocab_terms:
+        term = t["term"]
+        lowered = term.lower()
+        terms[lowered] = t
+        all_terms.append(term)
+
+        for err in t.get("known_errors", []):
+            errors[err.lower()] = t
+
+    return {"terms": terms, "errors": errors, "all_terms": all_terms}
+
+
+def _score_word(
+    word: str,
+    probability: float,
+    lookup: dict,
+) -> tuple[float, list[str], Optional[dict]]:
+    """Score a single word for suspicion.
+
+    Returns (score, reasons, matched_term_info).
+    """
+    score = 0.0
+    reasons = []
+    matched_term = None
+    w_lower = word.lower().strip(".,!?;:'\"()[]")
+
+    if not w_lower or len(w_lower) < 2:
+        return 0.0, [], None
+
+    # Signal 1: Known error exact match (+5)
+    if w_lower in lookup["errors"]:
+        score += 5
+        matched_term = lookup["errors"][w_lower]
+        reasons.append(f"known_error:{matched_term['term']}")
+
+    # Signal 2: Fuzzy match to vocab term (+3)
+    if not matched_term and lookup["all_terms"]:
+        matches = process.extract(
+            w_lower, [t.lower() for t in lookup["all_terms"]],
+            scorer=fuzz.ratio, limit=1, score_cutoff=FUZZY_MATCH_THRESHOLD,
+        )
+        if matches:
+            match_term_lower, match_score, _ = matches[0]
+            # Don't flag if it's an exact match (term is already correct)
+            if match_term_lower != w_lower:
+                matched_term = lookup["terms"].get(match_term_lower)
+                score += 3
+                reasons.append(f"vocab_near_miss:{match_term_lower}(score={match_score})")
+
+    # Signal 3: Low ASR confidence (+2)
+    if probability < LOW_CONFIDENCE_THRESHOLD:
+        score += 2
+        reasons.append(f"low_confidence:{probability:.2f}")
+
+    # Signal 4: Proper noun near vocab term (+2)
+    if word[0].isupper() and len(word) > 1 and not matched_term:
+        # Check if this capitalized word is similar to any vocab term
+        matches = process.extract(
+            w_lower, [t.lower() for t in lookup["all_terms"]],
+            scorer=fuzz.ratio, limit=1, score_cutoff=60,
+        )
+        if matches:
+            match_term_lower, match_score, _ = matches[0]
+            if match_term_lower != w_lower:
+                matched_term = lookup["terms"].get(match_term_lower)
+                score += 2
+                reasons.append(f"proper_noun_near_vocab:{match_term_lower}")
+
+    return score, reasons, matched_term
+
+
+def select_segments_rules(
+    transcript: dict,
+    vocab_terms: List[dict],
+    context_window: int = 80,
+    ocr_window_seconds: float = 15.0,
+) -> List[SegmentAnalysis]:
+    """Layer 1: Rule-based segment selection.
+
+    Analyzes each segment's words against vocabulary using multiple signals.
+    Returns list of SegmentAnalysis with flagged segments.
+    """
+    segments = transcript.get("segments", [])
+    full_text = transcript.get("text", "")
+
+    if not segments or not full_text:
+        return []
+
+    lookup = _build_term_lookup(vocab_terms)
+    analyses = []
+
+    for seg in segments:
+        seg_id = seg.get("id", 0)
+        seg_text = seg.get("text", "")
+        seg_start = seg.get("start", 0.0)
+        seg_end = seg.get("end", 0.0)
+        words = seg.get("words", [])
+
+        analysis = SegmentAnalysis(
+            segment_id=seg_id,
+            start=seg_start,
+            end=seg_end,
+            text=seg_text,
+        )
+
+        # Score each word in the segment
+        max_score = 0.0
+        seg_reasons = []
+
+        for w_entry in words:
+            word = w_entry.get("word", "")
+            prob = w_entry.get("probability", 1.0)
+
+            word_score, word_reasons, matched_term = _score_word(word, prob, lookup)
+
+            if word_score > 0:
+                seg_reasons.extend(word_reasons)
+
+            if word_score > max_score:
+                max_score = word_score
+
+            # If word is suspicious enough and we have a matched vocab term,
+            # create a CorrectionCandidate
+            if word_score >= SEGMENT_FLAG_THRESHOLD and matched_term:
+                # Find char position in full text
+                # Search for this word near the segment's text position
+                seg_text_pos = full_text.find(seg_text)
+                if seg_text_pos >= 0:
+                    word_pos_in_seg = seg_text.lower().find(word.lower())
+                    if word_pos_in_seg >= 0:
+                        char_pos = seg_text_pos + word_pos_in_seg
+                    else:
+                        char_pos = seg_text_pos
+                else:
+                    char_pos = 0
+
+                context = extract_context(full_text, char_pos, context_window)
+                ts = estimate_timestamp_for_position(full_text, char_pos, segments)
+                ts_start = max(0, ts - ocr_window_seconds)
+                ts_end = ts + ocr_window_seconds
+
+                candidate = CorrectionCandidate(
+                    term=matched_term["term"],
+                    category=matched_term.get("category", "custom"),
+                    known_errors=matched_term.get("known_errors", []),
+                    error_found=word,
+                    char_position=char_pos,
+                    timestamp_start=ts_start,
+                    timestamp_end=ts_end,
+                    context=context,
+                )
+                analysis.candidates.append(candidate)
+
+        analysis.rule_score = max_score
+        analysis.reasons = seg_reasons
+
+        if max_score >= SEGMENT_FLAG_THRESHOLD:
+            analysis.needs_correction = True
+
+            # Decide OCR vs AVSR based on term categories
+            for c in analysis.candidates:
+                if c.category in OCR_ELIGIBLE_CATEGORIES:
+                    analysis.needs_ocr = True
+                if c.category in AVSR_ELIGIBLE_CATEGORIES:
+                    analysis.needs_avsr = True
+
+            # Default: if no specific modality decided, use OCR
+            if not analysis.needs_ocr and not analysis.needs_avsr:
+                analysis.needs_ocr = True
+
+        analyses.append(analysis)
+
+    return analyses
+
+
+def select_segments_with_model(
+    analyses: List[SegmentAnalysis],
+    vocab_terms: List[dict],
+    model,
+    tokenizer,
+    max_segments: int = 50,
+) -> List[SegmentAnalysis]:
+    """Layer 2: Lightweight model check on segments near the threshold.
+
+    For segments that scored between 1-2 (below threshold but have some signal),
+    run a quick model check to catch high-confidence ASR errors.
+
+    Also confirms flagged segments to reduce false positives.
+    """
+    if model is None or tokenizer is None:
+        logger.info("Model not available for segment selection — using rules only")
+        return analyses
+
+    # Find borderline segments (have some signal but below threshold)
+    borderline = [a for a in analyses if 0 < a.rule_score < SEGMENT_FLAG_THRESHOLD]
+
+    if not borderline:
+        logger.info("No borderline segments to model-check")
+        return analyses
+
+    # Limit to avoid spending too long
+    borderline = borderline[:max_segments]
+    logger.info("Layer 2: Model-checking %d borderline segments", len(borderline))
+
+    # Build vocab list string for prompt
+    term_list = [t["term"] for t in vocab_terms[:50]]  # Limit vocab in prompt
+    vocab_str = json.dumps(term_list)
+
+    from .model import run_inference
+
+    system_prompt = (
+        "You are an ASR error detector. Given a transcript segment and vocabulary, "
+        "identify if any words are likely ASR errors (wrong words that sound similar "
+        "to the correct vocabulary terms). Respond with JSON only."
+    )
+
+    for analysis in borderline:
+        try:
+            prompt = (
+                f"Does this ASR segment contain errors?\n"
+                f"Segment: \"{analysis.text}\"\n"
+                f"Vocabulary: {vocab_str}\n"
+                f"Respond with: {{\"has_error\": true/false, \"suspect_words\": "
+                f"[{{\"word\": \"...\", \"should_be\": \"...\"}}]}}"
+            )
+
+            result = run_inference(
+                prompt, system_prompt, model, tokenizer, max_tokens=128
+            )
+
+            # Check if model found errors
+            if result.get("corrected") or result.get("changes"):
+                analysis.needs_correction = True
+                analysis.model_confirmed = True
+                analysis.needs_ocr = True  # Default to OCR for model-flagged
+                analysis.reasons.append("model_flagged")
+                logger.info("  Model flagged segment %d: '%s'",
+                           analysis.segment_id, analysis.text[:60])
+
+        except Exception as e:
+            logger.debug("Model check failed for segment %d: %s", analysis.segment_id, e)
+
+    return analyses
+
+
+def select_segments(
+    transcript: dict,
+    vocab_terms: List[dict],
+    model=None,
+    tokenizer=None,
+    context_window: int = 80,
+    ocr_window_seconds: float = 15.0,
+) -> List[SegmentAnalysis]:
+    """Main entry point: run both layers of segment selection.
+
+    Args:
+        transcript: ScreenApp transcript with segments and word-level data.
+        vocab_terms: Merged vocabulary list.
+        model: Optional model for Layer 2 check.
+        tokenizer: Optional tokenizer for Layer 2 check.
+
+    Returns:
+        List of SegmentAnalysis for all segments, with flagged ones marked.
+    """
+    import time
+    t0 = time.time()
+
+    # Layer 1: Rule-based scoring
+    analyses = select_segments_rules(
+        transcript, vocab_terms, context_window, ocr_window_seconds
+    )
+
+    flagged = [a for a in analyses if a.needs_correction]
+    needs_ocr = [a for a in analyses if a.needs_ocr]
+    needs_avsr = [a for a in analyses if a.needs_avsr]
+
+    logger.info("Segment selector Layer 1 (rules): %d/%d segments flagged "
+                "(ocr=%d, avsr=%d) in %.0fms",
+                len(flagged), len(analyses), len(needs_ocr), len(needs_avsr),
+                (time.time() - t0) * 1000)
+
+    # Layer 2: Model check on borderline segments
+    if model is not None:
+        t1 = time.time()
+        analyses = select_segments_with_model(analyses, vocab_terms, model, tokenizer)
+
+        flagged_after = [a for a in analyses if a.needs_correction]
+        new_flags = len(flagged_after) - len(flagged)
+        if new_flags > 0:
+            logger.info("Segment selector Layer 2 (model): +%d segments flagged in %.0fms",
+                        new_flags, (time.time() - t1) * 1000)
+
+    total_flagged = [a for a in analyses if a.needs_correction]
+    total_candidates = sum(len(a.candidates) for a in total_flagged)
+    logger.info("Segment selector total: %d/%d segments, %d candidates",
+                len(total_flagged), len(analyses), total_candidates)
+
+    return analyses
