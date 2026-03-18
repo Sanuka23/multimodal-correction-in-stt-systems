@@ -172,7 +172,7 @@ def correct_candidates(
             # Model returned no changes. Check if the model's corrected
             # output already contains the correct term — if so, the text
             # is fine and we should trust the model. If not, force-apply.
-            corrected_output = result_data.get("corrected", "").lower()
+            corrected_output = (result_data.get("corrected") or "").lower()
             # Use word boundaries to avoid matching inside other words
             term_pattern = re.compile(r'\b' + re.escape(candidate.term.lower()) + r'\b')
             error_pattern = re.compile(r'\b' + re.escape(candidate.error_found.lower()) + r'\b')

@@ -1,0 +1,17 @@
+{
+  "completed_at": "2026-03-18T00:01:39.882636",
+  "duration_seconds": 9054.86,
+  "config": {
+    "model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+    "batch_size": 4,
+    "learning_rate": 1e-05,
+    "iterations": 2000,
+    "lora_rank": 16,
+    "lora_layers": 8,
+    "grad_checkpoint": true
+  },
+  "data": {
+    "train_examples": 37830,
+    "valid_examples": 6676
+  }
+}

@@ -212,6 +212,93 @@ def _extract_ocr_sync(
     return xml
 
 
+def extract_ocr_for_segments(
+    video_url: str,
+    time_ranges: List[tuple],
+    padding_s: float = 5.0,
+    min_confidence: float = 0.5,
+) -> Dict[float, List[str]]:
+    """Extract OCR only for specific time ranges (targeted extraction).
+
+    Instead of processing the entire video, only extract frames within
+    the given time windows. Much faster for long videos.
+
+    Args:
+        video_url: URL or path to video file.
+        time_ranges: List of (start_s, end_s) tuples for segments needing OCR.
+        padding_s: Extra seconds before/after each range.
+        min_confidence: Min PaddleOCR confidence.
+
+    Returns:
+        Dict mapping timestamp (float seconds) → list of OCR text strings.
+    """
+    from .video_frames import extract_frames_at_timestamps
+
+    if not time_ranges:
+        return {}
+
+    # Merge overlapping time ranges with padding
+    merged = _merge_time_ranges(time_ranges, padding_s)
+    logger.info("Targeted OCR: %d ranges → %d merged windows", len(time_ranges), len(merged))
+
+    # Collect timestamps to extract (one frame per 5s within each range)
+    timestamps = []
+    for start, end in merged:
+        t = start
+        while t <= end:
+            timestamps.append(t)
+            t += 5.0  # One frame every 5 seconds within the window
+
+    if not timestamps:
+        return {}
+
+    logger.info("Targeted OCR: extracting %d frames (vs ~%d for full video)",
+                len(timestamps), int(max(t for t in timestamps) / 30) if timestamps else 0)
+
+    # Extract frames at specific timestamps
+    frames = extract_frames_at_timestamps(video_url, timestamps)
+    if not frames:
+        logger.warning("No frames extracted for targeted OCR")
+        return {}
+
+    # Run OCR on each frame
+    logger.info("Running PaddleOCR on %d targeted frames...", len(frames))
+    results = {}
+    for idx, frame in enumerate(frames):
+        if idx % 5 == 0:
+            logger.info("  Targeted OCR frame %d/%d (ts=%.0fs)...",
+                        idx + 1, len(frames), frame.timestamp_s)
+        ocr_result = _ocr_single_frame(frame, min_confidence=min_confidence)
+        if ocr_result:
+            texts = [t["text"] for t in ocr_result["texts"]]
+            results[frame.timestamp_s] = texts
+
+    logger.info("Targeted OCR complete: found text in %d/%d frames", len(results), len(frames))
+    return results
+
+
+def _merge_time_ranges(
+    ranges: List[tuple], padding: float = 5.0
+) -> List[tuple]:
+    """Merge overlapping time ranges with padding."""
+    if not ranges:
+        return []
+
+    # Add padding and sort
+    padded = [(max(0, s - padding), e + padding) for s, e in ranges]
+    padded.sort(key=lambda x: x[0])
+
+    merged = [padded[0]]
+    for start, end in padded[1:]:
+        if start <= merged[-1][1]:
+            # Overlapping — extend the current range
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+
+    return merged
+
+
 async def extract_ocr_from_video(
     video_url: str,
     interval_s: float = 30.0,
