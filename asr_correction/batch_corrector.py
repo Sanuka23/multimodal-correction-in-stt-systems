@@ -146,6 +146,7 @@ def correct_transcript_batch(
                 len(term_names), len(full_text))
 
     # Get OCR hints (if provider available, get hints for whole video)
+    # Clean hints to remove URLs, HTML entities, and UI noise that confuse the model
     ocr_hints = []
     if ocr_provider:
         try:
@@ -158,9 +159,21 @@ def correct_transcript_batch(
                     text_content = frame.get("text", "")
                     for line in text_content.split("\n"):
                         line = line.strip()
-                        if line and line not in seen and len(line) > 3:
-                            seen.add(line)
-                            ocr_hints.append(line)
+                        if not line or line in seen or len(line) <= 3:
+                            continue
+                        # Skip noise: URLs, HTML entities, JSON fragments, UI boilerplate
+                        if any(skip in line for skip in [
+                            "http", "://", "&quot;", "&amp;", "&lt;", "&gt;",
+                            "{", "}", "[", "]", "index", "logprobs", "finish_reason",
+                            "content\"", "message\"", "role\"", "assistant\"",
+                            "In-call messages", "access this chat",
+                        ]):
+                            continue
+                        # Skip very long lines (likely code/JSON)
+                        if len(line) > 80:
+                            continue
+                        seen.add(line)
+                        ocr_hints.append(line)
         except Exception as e:
             logger.warning("OCR hints fetch failed: %s", e)
 
@@ -194,50 +207,67 @@ def correct_transcript_batch(
         changes = result_data.get("changes", [])
         confidence = result_data.get("confidence", 0.0)
 
-        if confidence < config.confidence_threshold and not changes:
-            logger.info("  Chunk %d: skipped (confidence=%.2f, no changes)", i + 1, confidence)
+        # Filter out invalid changes: must be "old → new" format
+        valid_changes = []
+        for change in changes:
+            s = str(change)
+            if "→" not in s:
+                continue  # Skip single words (model hallucination)
+            parts = s.split("→")
+            if len(parts) != 2:
+                continue
+            old_w = parts[0].strip().strip("'\"")
+            new_w = parts[1].strip().strip("'\"")
+            if not old_w or not new_w:
+                continue
+            if old_w.lower() == new_w.lower():
+                continue  # No actual change
+            if len(old_w) > 50 or len(new_w) > 50:
+                continue  # Suspiciously long — likely hallucination
+            # Skip if old_word is a URL or contains special chars
+            if any(c in old_w for c in ["http", "://", "{", "}"]):
+                continue
+            valid_changes.append((old_w, new_w, s))
+        changes = valid_changes
+
+        if not changes and confidence < config.confidence_threshold:
+            logger.info("  Chunk %d: skipped (confidence=%.2f, no valid changes)", i + 1, confidence)
             continue
 
         if changes:
-            logger.info("  Chunk %d: %d changes (confidence=%.2f): %s",
-                        i + 1, len(changes), confidence, changes[:5])
+            logger.info("  Chunk %d: %d valid changes (confidence=%.2f): %s",
+                        i + 1, len(changes), confidence,
+                        [f"{o}→{n}" for o, n, _ in changes[:5]])
 
             # Apply changes to the full text
-            for change in changes:
-                if "→" in str(change):
-                    parts = str(change).split("→")
-                    if len(parts) == 2:
-                        old_word = parts[0].strip().strip("'\"")
-                        new_word = parts[1].strip().strip("'\"")
+            for old_word, new_word, change_str in changes:
+                # Apply with word boundaries
+                pattern = re.compile(
+                    r'\b' + re.escape(old_word) + r'\b',
+                    re.IGNORECASE,
+                )
+                new_text = pattern.sub(new_word, corrected_text, count=1)
+                if new_text != corrected_text:
+                    corrected_text = new_text
+                    total_applied += 1
+                    all_changes.append(change_str)
+                    logger.info("    Applied: '%s' → '%s'", old_word, new_word)
 
-                        if old_word and new_word and old_word.lower() != new_word.lower():
-                            # Apply with word boundaries
-                            pattern = re.compile(
-                                r'\b' + re.escape(old_word) + r'\b',
-                                re.IGNORECASE,
-                            )
-                            new_text = pattern.sub(new_word, corrected_text, count=1)
-                            if new_text != corrected_text:
-                                corrected_text = new_text
-                                total_applied += 1
-                                all_changes.append(change)
-                                logger.info("    Applied: '%s' → '%s'", old_word, new_word)
-
-                                # Create CorrectionResult for report
-                                results.append(CorrectionResult(
-                                    candidate=CorrectionCandidate(
-                                        term=new_word, category="batch",
-                                        known_errors=[old_word], error_found=old_word,
-                                        char_position=0, timestamp_start=0, timestamp_end=0,
-                                        context=change,
-                                    ),
-                                    corrected_text=new_word,
-                                    changes=[change],
-                                    confidence=confidence,
-                                    need_lip=False,
-                                    ocr_hints_used=ocr_hints[:3],
-                                    applied=True,
-                                ))
+                    # Create CorrectionResult for report
+                    results.append(CorrectionResult(
+                        candidate=CorrectionCandidate(
+                            term=new_word, category="batch",
+                            known_errors=[old_word], error_found=old_word,
+                            char_position=0, timestamp_start=0, timestamp_end=0,
+                            context=change_str,
+                        ),
+                        corrected_text=new_word,
+                        changes=[change_str],
+                        confidence=confidence,
+                        need_lip=False,
+                        ocr_hints_used=ocr_hints[:3],
+                        applied=True,
+                    ))
         else:
             logger.info("  Chunk %d: no changes needed (confidence=%.2f)", i + 1, confidence)
 
