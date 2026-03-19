@@ -171,14 +171,110 @@ class AutoAVSRProvider:
                 "run scripts/setup_auto_avsr.sh to install)"
             )
 
+    def _detect_active_speaker_bbox(
+        self, video_url: str, start_s: float, end_s: float
+    ) -> Optional[dict]:
+        """Use MediaPipe to find the active speaker's face bounding box.
+
+        For multi-speaker videos, identifies which face has the most
+        mouth movement (MAR variance) and returns its bounding box
+        so we can crop the video to just that face for lip reading.
+
+        Returns:
+            dict with {x, y, w, h, face_id, num_faces} in normalized coords,
+            or None if no faces found.
+        """
+        try:
+            from .mouth_extractor import extract_segment_frames
+            import cv2
+            import mediapipe as mp
+
+            frames = extract_segment_frames(video_url, start_s, end_s, num_frames=8)
+            if not frames:
+                return None
+
+            face_mesh = mp.solutions.face_mesh.FaceMesh(
+                static_image_mode=True, max_num_faces=5,
+                refine_landmarks=True, min_detection_confidence=0.5,
+            )
+
+            # Track faces: face_id → {mar_values, bbox_sum, count}
+            face_data: dict = {}
+
+            for frame in frames:
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = face_mesh.process(rgb)
+                if not results.multi_face_landmarks:
+                    continue
+
+                for fl in results.multi_face_landmarks:
+                    lm = fl.landmark
+                    nose_x = round(lm[1].x, 1)
+
+                    # Compute MAR
+                    upper, lower = lm[13], lm[14]
+                    left, right = lm[78], lm[308]
+                    vert = ((upper.x - lower.x)**2 + (upper.y - lower.y)**2)**0.5
+                    horiz = ((left.x - right.x)**2 + (left.y - right.y)**2)**0.5
+                    mar = vert / horiz if horiz > 1e-6 else 0.0
+
+                    # Get face bounding box from landmarks
+                    xs = [l.x for l in lm]
+                    ys = [l.y for l in lm]
+                    bbox = {
+                        "x": min(xs), "y": min(ys),
+                        "w": max(xs) - min(xs), "h": max(ys) - min(ys),
+                    }
+
+                    if nose_x not in face_data:
+                        face_data[nose_x] = {"mars": [], "bboxes": [], "count": 0}
+                    face_data[nose_x]["mars"].append(mar)
+                    face_data[nose_x]["bboxes"].append(bbox)
+                    face_data[nose_x]["count"] += 1
+
+            face_mesh.close()
+
+            if not face_data:
+                return None
+
+            import numpy as np
+            # Active speaker = highest MAR variance
+            active_id = max(
+                face_data.keys(),
+                key=lambda fid: np.std(face_data[fid]["mars"]) if len(face_data[fid]["mars"]) >= 2 else 0.0,
+            )
+
+            # Average bounding box across frames for stability
+            bboxes = face_data[active_id]["bboxes"]
+            avg_bbox = {
+                "x": sum(b["x"] for b in bboxes) / len(bboxes),
+                "y": sum(b["y"] for b in bboxes) / len(bboxes),
+                "w": sum(b["w"] for b in bboxes) / len(bboxes),
+                "h": sum(b["h"] for b in bboxes) / len(bboxes),
+                "face_id": active_id,
+                "num_faces": len(face_data),
+            }
+
+            logger.info(
+                "Active speaker [%.1f-%.1fs]: face_id=%.1f, %d faces, bbox=(%.2f,%.2f,%.2f,%.2f)",
+                start_s, end_s, active_id, len(face_data),
+                avg_bbox["x"], avg_bbox["y"], avg_bbox["w"], avg_bbox["h"],
+            )
+            return avg_bbox
+
+        except Exception as e:
+            logger.warning("Active speaker detection failed: %s", e)
+            return None
+
     def analyze_segment(
         self, video_url: str, start_s: float, end_s: float
     ) -> Optional[AVSRHint]:
         """Analyze a video segment using full lip-reading model.
 
-        Extracts a video clip for the segment, runs face detection and
-        mouth ROI extraction, then performs visual speech recognition
-        to produce a text transcript.
+        For multi-speaker videos:
+        1. Detects all faces and identifies the active speaker (most mouth movement)
+        2. Crops the video to just the active speaker's face
+        3. Runs lip reading on the cropped face only
 
         Args:
             video_url: URL or local path to the video.
@@ -201,43 +297,59 @@ class AutoAVSRProvider:
         try:
             from .mouth_extractor import extract_video_clip
 
-            # Extract video clip for this segment
             tmpdir = tempfile.mkdtemp(prefix="avsr_segment_")
+
+            # Step 1: Detect active speaker
+            speaker_bbox = self._detect_active_speaker_bbox(video_url, start_s, end_s)
+            num_faces = speaker_bbox["num_faces"] if speaker_bbox else 1
+            active_face_id = speaker_bbox["face_id"] if speaker_bbox else None
+
+            # Step 2: Extract video clip, cropped to active speaker if multi-face
+            crop_filter = None
+            if speaker_bbox and speaker_bbox["num_faces"] > 1:
+                # Add padding around the face (20% each side)
+                pad = 0.2
+                x = max(0, speaker_bbox["x"] - pad * speaker_bbox["w"])
+                y = max(0, speaker_bbox["y"] - pad * speaker_bbox["h"])
+                w = min(1.0 - x, speaker_bbox["w"] * (1 + 2 * pad))
+                h = min(1.0 - y, speaker_bbox["h"] * (1 + 2 * pad))
+                # FFmpeg crop filter uses pixel coords — pass as normalized for extract_video_clip
+                crop_filter = {"x": x, "y": y, "w": w, "h": h}
+                logger.info(
+                    "Cropping to active speaker (face %.1f): x=%.2f y=%.2f w=%.2f h=%.2f",
+                    speaker_bbox["face_id"], x, y, w, h,
+                )
+
             clip_path = extract_video_clip(
-                video_url, start_s, end_s, output_dir=tmpdir
+                video_url, start_s, end_s, output_dir=tmpdir,
+                crop_normalized=crop_filter,
             )
 
             logger.info(
-                "Running Auto-AVSR lip reading on [%.1f-%.1fs]...",
-                start_s, end_s,
+                "Running Auto-AVSR lip reading on [%.1f-%.1fs] (%d faces, active=%.1f)...",
+                start_s, end_s, num_faces, active_face_id or 0,
             )
 
-            # Run the full pipeline: video → face detection → lip reading → text
+            # Step 3: Run lip reading on (cropped) clip
             transcript = pipeline(clip_path)
 
             if not transcript or not str(transcript).strip():
-                logger.info(
-                    "Auto-AVSR returned empty transcript for [%.1f-%.1fs]",
-                    start_s, end_s,
-                )
                 return AVSRHint(
-                    face_detected=False,
-                    speaking_confidence=0.0,
-                    lip_transcript=None,
-                    mode="auto_avsr",
+                    face_detected=False, speaking_confidence=0.0,
+                    lip_transcript=None, mode="auto_avsr",
+                    num_faces=num_faces, active_speaker_id=active_face_id,
                 )
 
             transcript = str(transcript).strip()
             logger.info(
-                "Auto-AVSR transcript [%.1f-%.1fs]: '%s'",
-                start_s, end_s, transcript[:100],
+                "Auto-AVSR transcript [%.1f-%.1fs]: '%s' (%d faces)",
+                start_s, end_s, transcript[:100], num_faces,
             )
 
             return AVSRHint(
-                face_detected=True,
-                speaking_confidence=0.8,
-                lip_transcript=transcript,
-                mode="auto_avsr",
+                face_detected=True, speaking_confidence=0.8,
+                lip_transcript=transcript, mode="auto_avsr",
+                active_speaker_id=active_face_id, num_faces=num_faces,
             )
 
         except Exception as e:
@@ -248,7 +360,6 @@ class AutoAVSRProvider:
             return None
 
         finally:
-            # Clean up temp clip
             if tmpdir and os.path.exists(tmpdir):
                 try:
                     shutil.rmtree(tmpdir)

@@ -88,10 +88,16 @@ def _plausibility_score(error_word: str, term: str) -> tuple[float, list[str]]:
     len_ratio = min(len(e), len(t)) / max(len(e), len(t))
     edit_dist = jellyfish.levenshtein_distance(e, t)
 
-    if len(e) <= 3:
-        # Very short words (≤3 chars): ONLY accept exact match or plural
-        # "rag"→"RAG" OK, "LLM"→"LLMs" OK, "but"→"Bud" REJECT
-        if edit_dist > 0 and not (t.startswith(e) and len(t) - len(e) <= 1):
+    if len(e) <= 2:
+        # Extremely short words (≤2 chars like "is", "or", "be"):
+        # ONLY accept exact case change (e.g., "ai"→"AI")
+        if e != t:
+            reasons.append(f"tiny_word_blocked:len={len(e)}")
+            return 0.05, reasons
+    elif len(e) <= 3:
+        # Very short words (3 chars): ONLY accept exact match, case change, or plural
+        # "rag"→"RAG" OK, "LLM"→"LLMs" OK, "but"→"Bud" REJECT, "see"→"SEO" REJECT
+        if edit_dist > 0 and not (e == t[:len(e)] and len(t) - len(e) <= 1):
             reasons.append(f"very_short_word:len={len(e)},edit={edit_dist}")
             return 0.05, reasons
     elif len(e) <= 4:
