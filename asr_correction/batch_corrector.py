@@ -29,30 +29,35 @@ def build_batch_prompt(
     transcript_chunk: str,
     vocab_terms: List[str],
     ocr_hints: Optional[List[str]] = None,
+    lip_hint: Optional[str] = None,
 ) -> str:
-    """Build a prompt for batch correction — uses same format as training data."""
+    """Build a prompt for batch correction — asks for changes only, not full text.
+
+    This is much faster because the model only outputs the diff (~256 tokens)
+    instead of repeating the entire transcript (~2000 chars).
+    """
     vocab_str = json.dumps(vocab_terms[:50])
 
     prompt = (
-        "Correct this ASR transcript segment using the provided context.\n"
-        "IMPORTANT: Only change words that are clearly wrong. If a word is "
-        "already correct, do NOT change it. Use OCR screen text to verify "
-        "the correct spelling of domain terms.\n\n"
+        "Review this ASR transcript and find words that are wrong based on the vocabulary.\n"
+        "Return ONLY the changes as JSON. Do NOT repeat the full transcript.\n\n"
         f"ASR transcript: {transcript_chunk}\n"
-        f"Custom vocabulary: {vocab_str}\n"
-        f"Category: batch\n"
+        f"Vocabulary: {vocab_str}\n"
     )
 
     if ocr_hints:
         prompt += (
-            "Screen text (OCR from slides/UI visible during this segment):\n"
+            "Screen text (OCR):\n"
             + "\n".join(f"  - {h}" for h in ocr_hints[:15]) + "\n"
-            + "Use these screen terms to verify correct spellings.\n"
         )
-    else:
-        prompt += "OCR hints: none available\n"
 
-    prompt += "Lip reading hint: null\n"
+    if lip_hint and lip_hint != "null":
+        prompt += f"Lip reading hint: {lip_hint}\n"
+
+    prompt += (
+        '\nRespond with JSON: {"changes": ["wrong_word → correct_word", ...], "confidence": 0.95}\n'
+        'If no errors found, respond: {"changes": [], "confidence": 0.99}'
+    )
 
     return prompt
 
@@ -179,19 +184,18 @@ def correct_transcript_batch(
             logger.info("  Dry-run: skipping inference")
             continue
 
-        # Build prompt and run inference
+        # Build prompt and run inference — changes-only format, small output
         prompt = build_batch_prompt(chunk_text, term_names, ocr_hints)
         result_data = run_inference(
             prompt, BATCH_SYSTEM_PROMPT, model, tokenizer,
-            max_tokens=min(1024, len(chunk_text) + 256),
+            max_tokens=256,  # Only need changes list, not full text
         )
 
-        corrected_chunk = result_data.get("corrected", "")
         changes = result_data.get("changes", [])
         confidence = result_data.get("confidence", 0.0)
 
-        if not corrected_chunk or confidence < config.confidence_threshold:
-            logger.info("  Chunk %d: skipped (confidence=%.2f, no corrected text)", i + 1, confidence)
+        if confidence < config.confidence_threshold and not changes:
+            logger.info("  Chunk %d: skipped (confidence=%.2f, no changes)", i + 1, confidence)
             continue
 
         if changes:

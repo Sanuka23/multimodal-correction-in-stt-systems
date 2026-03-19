@@ -108,16 +108,20 @@ def extract_video_clip(
     start_s: float,
     end_s: float,
     output_dir: str = None,
+    crop_normalized: dict = None,
 ) -> str:
     """Extract a video clip as an MP4 file for Auto-AVSR processing.
 
     Auto-AVSR expects 25fps video with yuv420p pixel format.
+    Optionally crops to a specific face region (for active speaker isolation).
 
     Args:
         video_url: URL or local path to the video file.
         start_s: Start time in seconds.
         end_s: End time in seconds.
         output_dir: Directory for the temp clip. If None, uses system temp.
+        crop_normalized: Optional dict {x, y, w, h} with normalized coords (0-1)
+                        to crop to the active speaker's face region.
 
     Returns:
         Path to the extracted .mp4 clip file.
@@ -134,12 +138,28 @@ def extract_video_clip(
 
     clip_path = os.path.join(output_dir, "segment.mp4")
 
+    # Build video filter chain
+    vf_parts = []
+    if crop_normalized:
+        # Crop to active speaker face using normalized coordinates.
+        # FFmpeg crop filter: crop=w:h:x:y (in pixels)
+        # We use expressions with iw/ih to convert normalized → pixel coords.
+        cx = crop_normalized["x"]
+        cy = crop_normalized["y"]
+        cw = crop_normalized["w"]
+        ch = crop_normalized["h"]
+        vf_parts.append(f"crop=iw*{cw:.4f}:ih*{ch:.4f}:iw*{cx:.4f}:ih*{cy:.4f}")
+        logger.info("Cropping video to face region: x=%.2f y=%.2f w=%.2f h=%.2f", cx, cy, cw, ch)
+
+    vf_parts.append("fps=25")  # Auto-AVSR expects 25fps
+    vf_str = ",".join(vf_parts)
+
     cmd = [
         "ffmpeg",
         "-ss", str(start_s),
         "-i", video_url,
         "-t", str(duration),
-        "-r", "25",                # Auto-AVSR expects 25fps
+        "-vf", vf_str,
         "-pix_fmt", "yuv420p",
         "-c:v", "libx264",
         "-preset", "ultrafast",
@@ -148,8 +168,9 @@ def extract_video_clip(
         clip_path,
     ]
 
-    logger.info("Extracting video clip [%.1f-%.1fs] (%.1fs duration)",
-                start_s, end_s, duration)
+    logger.info("Extracting video clip [%.1f-%.1fs] (%.1fs duration%s)",
+                start_s, end_s, duration,
+                ", cropped" if crop_normalized else "")
 
     try:
         result = subprocess.run(

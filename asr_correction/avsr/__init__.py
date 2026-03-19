@@ -22,24 +22,31 @@ class AVSRHint:
     speaking_confidence: float  # 0.0-1.0
     lip_transcript: Optional[str] = None  # Only from full Auto-AVSR mode
     mode: str = "mediapipe"  # "mediapipe" or "auto_avsr"
+    active_speaker_id: Optional[float] = None  # Face position ID (nose x-coord)
+    num_faces: int = 1  # Number of faces detected in frame
 
     def to_prompt_hint(self) -> str:
         """Format as a string for the LLM prompt."""
         if not self.face_detected:
             return "No face detected in video segment"
+
+        speaker_info = ""
+        if self.num_faces > 1:
+            speaker_info = f" [active speaker from {self.num_faces} faces]"
+
         if self.lip_transcript:
             return (
                 f"Visual speech suggests: '{self.lip_transcript}' "
-                f"(confidence: {self.speaking_confidence:.2f})"
+                f"(confidence: {self.speaking_confidence:.2f}){speaker_info}"
             )
         if self.speaking_confidence > 0.5:
             return (
                 f"Speaker detected and actively speaking "
-                f"(confidence: {self.speaking_confidence:.2f})"
+                f"(confidence: {self.speaking_confidence:.2f}){speaker_info}"
             )
         return (
             f"Face detected but low speaking activity "
-            f"(confidence: {self.speaking_confidence:.2f})"
+            f"(confidence: {self.speaking_confidence:.2f}){speaker_info}"
         )
 
 

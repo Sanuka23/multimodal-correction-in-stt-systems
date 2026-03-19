@@ -84,16 +84,75 @@ class MediaPipeHintProvider:
 
             self._face_mesh = mp.solutions.face_mesh.FaceMesh(
                 static_image_mode=True,
-                max_num_faces=1,
+                max_num_faces=5,  # Detect up to 5 faces for multi-speaker
                 refine_landmarks=True,
                 min_detection_confidence=0.5,
             )
         return self._face_mesh
 
+    def detect_active_speaker(
+        self, video_url: str, start_s: float, end_s: float, num_frames: int = 8
+    ) -> Optional[int]:
+        """Detect which face is the active speaker in a multi-person video.
+
+        Computes MAR variance for each detected face across frames.
+        The face with the highest mouth movement variance is the active speaker.
+
+        Returns:
+            Index of the active speaker face (0-based), or None if no faces found.
+        """
+        frames = extract_segment_frames(video_url, start_s, end_s, num_frames=num_frames)
+        if not frames:
+            return None
+
+        import cv2
+        face_mesh = self._get_face_mesh()
+
+        # Track MAR values per face position (using face center x-coord as ID)
+        face_tracks: dict = {}  # face_id → list of MAR values
+
+        for frame in frames:
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = face_mesh.process(rgb_frame)
+
+            if not results.multi_face_landmarks:
+                continue
+
+            for face_idx, face_landmarks in enumerate(results.multi_face_landmarks):
+                landmarks = face_landmarks.landmark
+                # Use nose tip x-coordinate to track face identity across frames
+                nose_x = landmarks[1].x
+                face_id = round(nose_x, 1)  # Bucket to nearest 0.1
+
+                mar = _compute_mouth_aspect_ratio(landmarks)
+                if face_id not in face_tracks:
+                    face_tracks[face_id] = []
+                face_tracks[face_id].append(mar)
+
+        if not face_tracks:
+            return None
+
+        # The active speaker has the highest MAR variance (mouth opening/closing)
+        best_face_id = max(
+            face_tracks.keys(),
+            key=lambda fid: np.std(face_tracks[fid]) if len(face_tracks[fid]) >= 2 else 0.0,
+        )
+
+        logger.debug(
+            "Active speaker detection: %d faces tracked, active=%.1f (MAR std=%.4f)",
+            len(face_tracks), best_face_id,
+            np.std(face_tracks[best_face_id]) if len(face_tracks[best_face_id]) >= 2 else 0.0,
+        )
+
+        return best_face_id
+
     def analyze_segment(
         self, video_url: str, start_s: float, end_s: float
     ) -> Optional[AVSRHint]:
         """Analyze a video segment for face presence and speaking activity.
+
+        For multi-speaker videos, detects the active speaker first,
+        then measures speaking confidence for that specific face.
 
         Args:
             video_url: URL or local path to the video.
@@ -103,8 +162,7 @@ class MediaPipeHintProvider:
         Returns:
             AVSRHint with detection results, or None on failure.
         """
-        # Extract a few frames from the segment
-        frames = extract_segment_frames(video_url, start_s, end_s, num_frames=5)
+        frames = extract_segment_frames(video_url, start_s, end_s, num_frames=8)
         if not frames:
             logger.debug(
                 "No frames extracted for segment [%.2f-%.2f]s", start_s, end_s
@@ -115,47 +173,59 @@ class MediaPipeHintProvider:
                 mode="mediapipe",
             )
 
+        import cv2
         face_mesh = self._get_face_mesh()
-        mar_values: List[float] = []
-        faces_detected = 0
+
+        # Track all faces and their MAR values
+        face_tracks: dict = {}  # face_id → list of MAR values
 
         for frame in frames:
-            # MediaPipe expects RGB
-            import cv2
-
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             results = face_mesh.process(rgb_frame)
 
-            if results.multi_face_landmarks:
-                faces_detected += 1
-                landmarks = results.multi_face_landmarks[0].landmark
-                mar = _compute_mouth_aspect_ratio(landmarks)
-                mar_values.append(mar)
+            if not results.multi_face_landmarks:
+                continue
 
-        if faces_detected == 0:
+            for face_landmarks in results.multi_face_landmarks:
+                landmarks = face_landmarks.landmark
+                nose_x = landmarks[1].x
+                face_id = round(nose_x, 1)
+                mar = _compute_mouth_aspect_ratio(landmarks)
+                if face_id not in face_tracks:
+                    face_tracks[face_id] = []
+                face_tracks[face_id].append(mar)
+
+        if not face_tracks:
             return AVSRHint(
                 face_detected=False,
                 speaking_confidence=0.0,
                 mode="mediapipe",
             )
 
-        # Calculate speaking confidence from MAR statistics
-        face_ratio = faces_detected / len(frames)
-        speaking_confidence = _estimate_speaking_confidence(mar_values)
+        # Find the active speaker (highest MAR variance)
+        active_face_id = max(
+            face_tracks.keys(),
+            key=lambda fid: np.std(face_tracks[fid]) if len(face_tracks[fid]) >= 2 else 0.0,
+        )
+        active_mar_values = face_tracks[active_face_id]
 
-        # Weight by face detection consistency
+        speaking_confidence = _estimate_speaking_confidence(active_mar_values)
+        face_ratio = len(active_mar_values) / len(frames)
         speaking_confidence *= face_ratio
 
         logger.debug(
-            "Segment [%.2f-%.2f]s: faces=%d/%d, MAR values=%s, confidence=%.2f",
-            start_s, end_s, faces_detected, len(frames),
-            [f"{v:.3f}" for v in mar_values], speaking_confidence,
+            "Segment [%.2f-%.2f]s: %d faces, active_speaker=%.1f, MAR=%s, confidence=%.2f",
+            start_s, end_s, len(face_tracks), active_face_id,
+            [f"{v:.3f}" for v in active_mar_values], speaking_confidence,
         )
 
         return AVSRHint(
             face_detected=True,
             speaking_confidence=round(speaking_confidence, 3),
+            lip_transcript=None,
             mode="mediapipe",
+            active_speaker_id=active_face_id,
+            num_faces=len(face_tracks),
         )
 
 
