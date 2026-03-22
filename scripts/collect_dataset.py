@@ -175,12 +175,132 @@ def cc_to_text(cc_entries: list) -> str:
     return " ".join(e.get("text", "").strip() for e in cc_entries if e.get("text")).strip()
 
 
+def collect_transcripts_from_screenapp(output_dir: Path):
+    """Pass 2: Collect transcripts from ScreenApp for already-uploaded files.
+
+    Queries ScreenApp folder for all files, matches by video_id in filename,
+    and downloads transcripts for any that are ready.
+    """
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from training.screenapp_transcribe import ScreenAppTranscriber
+
+    transcripts_dir = output_dir / "transcripts"
+    transcripts_dir.mkdir(exist_ok=True)
+
+    transcriber = ScreenAppTranscriber()
+
+    # Get all files from ScreenApp folder
+    print("\n=== Collecting Transcripts from ScreenApp ===\n")
+    print("Fetching file list from ScreenApp folder...")
+
+    import requests
+    headers = transcriber._get_headers() if hasattr(transcriber, '_get_headers') else {
+        "Authorization": f"Bearer {transcriber.pat_token}"
+    }
+
+    all_files = []
+    offset = 0
+    limit = 100
+    while True:
+        resp = requests.get(
+            f"{transcriber.api_url}/files",
+            params={"parentId": transcriber.folder_id, "limit": limit, "offset": offset},
+            headers=headers,
+        )
+        if resp.status_code != 200:
+            print(f"  ERROR: API returned {resp.status_code}")
+            break
+        data = resp.json().get("data", {})
+        files = data.get("fileSystem", data.get("files", []))
+        if not files:
+            break
+        all_files.extend(files)
+        offset += len(files)
+        if len(files) < limit:
+            break
+
+    print(f"Found {len(all_files)} files in ScreenApp folder")
+
+    # Match files to curated video IDs
+    collected = 0
+    for f in all_files:
+        file_id = f.get("_id", "")
+        file_name = f.get("name", "")
+
+        # Check if this file has a transcript
+        transcript_data = f.get("textData", {})
+        transcript_text = transcript_data.get("transcriptText", "")
+
+        if not transcript_text or len(transcript_text) < 50:
+            continue
+
+        # Try to match to a video_id from our curated list
+        # ScreenApp renames files, so check if any video_id appears in providerKey
+        provider_key = f.get("providerKey", "")
+        matched_video_id = None
+        for vid_id, title, accent, domain in CURATED_VIDEOS:
+            # Check if file was uploaded with this video's filename
+            if vid_id in file_name or vid_id in provider_key:
+                matched_video_id = vid_id
+                break
+
+        if not matched_video_id:
+            # Try matching by file_id from upload tracking
+            upload_tracking = output_dir / "upload_tracking.json"
+            if upload_tracking.exists():
+                with open(upload_tracking) as tf:
+                    tracking = json.load(tf)
+                matched_video_id = tracking.get(file_id)
+
+        if not matched_video_id:
+            continue
+
+        # Save transcript
+        sa_file = transcripts_dir / f"{matched_video_id}_screenapp.json"
+        if sa_file.exists():
+            print(f"  {matched_video_id}: already collected, skipping")
+            continue
+
+        segments = transcript_data.get("segments", [])
+        sa_transcript = {
+            "text": transcript_text,
+            "segments": [
+                {
+                    "id": i,
+                    "start": s.get("start", 0),
+                    "end": s.get("end", 0),
+                    "text": s.get("text", "").strip(),
+                    "words": s.get("words", []),
+                }
+                for i, s in enumerate(segments)
+            ],
+            "file_id": file_id,
+        }
+
+        with open(sa_file, "w") as sf:
+            json.dump(sa_transcript, sf, indent=2)
+
+        # Also save ASR text
+        asr_file = transcripts_dir / f"{matched_video_id}_asr.txt"
+        asr_file.write_text(transcript_text)
+
+        collected += 1
+        print(f"  {matched_video_id}: collected ({len(transcript_text)} chars, {len(segments)} segments)")
+
+    print(f"\nCollected {collected} new transcripts")
+    return collected
+
+
 def main():
     parser = argparse.ArgumentParser(description="Collect YouTube evaluation dataset")
     parser.add_argument("--output", default="data/eval_dataset")
     parser.add_argument("--max-videos", type=int, default=15)
     parser.add_argument("--skip-download", action="store_true",
                         help="Skip video download if already present")
+    parser.add_argument("--upload-only", action="store_true",
+                        help="Pass 1: Download videos + fetch CC + upload to ScreenApp (don't wait for transcripts)")
+    parser.add_argument("--collect-only", action="store_true",
+                        help="Pass 2: Collect transcripts from ScreenApp for already-uploaded files")
     args = parser.parse_args()
 
     output_dir = Path(args.output)
@@ -190,10 +310,21 @@ def main():
     transcripts_dir = output_dir / "transcripts"
     transcripts_dir.mkdir(exist_ok=True)
 
+    # Pass 2: Just collect transcripts from ScreenApp
+    if args.collect_only:
+        collected = collect_transcripts_from_screenapp(output_dir)
+        # Rebuild manifest from collected files
+        _rebuild_manifest(output_dir, transcripts_dir, videos_dir)
+        return
+
     manifest = []
+    upload_tracking = {}  # screenapp_file_id → video_id
     collected = 0
 
-    print(f"\n=== Dataset Collection (target: {args.max_videos} videos) ===\n")
+    print(f"\n=== Dataset Collection (target: {args.max_videos} videos) ===")
+    if args.upload_only:
+        print("=== MODE: Upload only (transcripts collected later with --collect-only) ===")
+    print()
 
     for video_id, title, accent, domain in CURATED_VIDEOS:
         if collected >= args.max_videos:
@@ -218,6 +349,13 @@ def main():
         gt_text = cc_to_text(cc_entries)
         print(f"OK ({len(cc_entries)} segments, {len(gt_text)} chars)")
 
+        # Save ground truth immediately
+        gt_file = transcripts_dir / f"{video_id}_ground_truth.txt"
+        gt_file.write_text(gt_text)
+        cc_file = transcripts_dir / f"{video_id}_cc.json"
+        with open(cc_file, "w") as f:
+            json.dump(cc_entries, f, indent=2)
+
         # Download video
         video_path = None
         for ext in ("mp4", "mkv", "webm"):
@@ -240,38 +378,77 @@ def main():
             print("     SKIP — no video")
             continue
 
-        # Get ASR transcript via ScreenApp (real production pipeline)
-        sa_file = transcripts_dir / f"{video_id}_screenapp.json"
-        if sa_file.exists():
-            print(f"     ScreenApp transcript exists, loading...")
-            with open(sa_file) as f:
-                sa_transcript = json.load(f)
+        if args.upload_only:
+            # Upload to ScreenApp but don't wait for transcript
+            sa_file = transcripts_dir / f"{video_id}_screenapp.json"
+            if sa_file.exists():
+                print(f"     ScreenApp transcript already exists")
+            else:
+                print(f"     Uploading to ScreenApp (no wait)...", end=" ", flush=True)
+                try:
+                    sys.path.insert(0, str(Path(__file__).parent.parent))
+                    from training.screenapp_transcribe import ScreenAppTranscriber
+                    transcriber = ScreenAppTranscriber()
+
+                    import requests
+                    headers = {"Authorization": f"Bearer {transcriber.pat_token}"}
+                    file_name = Path(video_path).name
+                    content_type = "video/mp4"
+
+                    # Step 1: Get pre-signed upload URL (same endpoint as transcribe_file)
+                    resp = requests.post(
+                        f"{transcriber.api_url}/files/upload/urls/{transcriber.team_id}/{transcriber.folder_id}",
+                        json=[{"fileName": file_name, "contentType": content_type}],
+                        headers=headers,
+                    )
+                    if resp.status_code == 200:
+                        upload_params = resp.json().get("data", {}).get("uploadParams", [])
+                        if not upload_params:
+                            print("FAILED — no upload params")
+                        else:
+                            file_id = upload_params[0]["fileId"]
+                            upload_url = upload_params[0]["uploadUrl"]
+
+                            # Step 2: Upload to S3
+                            with open(video_path, "rb") as vf:
+                                requests.put(upload_url, data=vf, headers={"Content-Type": content_type})
+
+                            # Step 3: Finalize (triggers transcription)
+                            requests.post(
+                                f"{transcriber.api_url}/files/upload/finalize/{transcriber.team_id}/{transcriber.folder_id}",
+                                json={"fileIds": [file_id]},
+                                headers=headers,
+                            )
+
+                            upload_tracking[file_id] = video_id
+                            print(f"OK (file_id={file_id[:8]}...)")
+                    else:
+                        print(f"FAILED (status={resp.status_code})")
+                except Exception as e:
+                    print(f"FAILED — {e}")
         else:
-            sa_transcript = upload_to_screenapp(video_path)
-            if sa_transcript is None:
-                print("     SKIP — ScreenApp transcription failed")
+            # Full mode: upload and wait for transcript
+            sa_file = transcripts_dir / f"{video_id}_screenapp.json"
+            if sa_file.exists():
+                print(f"     ScreenApp transcript exists, loading...")
+                with open(sa_file) as f:
+                    sa_transcript = json.load(f)
+            else:
+                sa_transcript = upload_to_screenapp(video_path)
+                if sa_transcript is None:
+                    print("     SKIP — ScreenApp transcription failed")
+                    continue
+
+            asr_text = sa_transcript.get("text", "")
+            if not asr_text or len(asr_text) < 50:
+                print("     SKIP — transcript too short")
                 continue
 
-        asr_text = sa_transcript.get("text", "")
-        if not asr_text or len(asr_text) < 50:
-            print("     SKIP — transcript too short")
-            continue
+            asr_file = transcripts_dir / f"{video_id}_asr.txt"
+            asr_file.write_text(asr_text)
 
-        # Save files
-        gt_file = transcripts_dir / f"{video_id}_ground_truth.txt"
-        gt_file.write_text(gt_text)
-
-        asr_file = transcripts_dir / f"{video_id}_asr.txt"
-        asr_file.write_text(asr_text)
-
-        if not sa_file.exists():
             with open(sa_file, "w") as f:
                 json.dump(sa_transcript, f, indent=2)
-
-        # Save CC with timestamps for reference
-        cc_file = transcripts_dir / f"{video_id}_cc.json"
-        with open(cc_file, "w") as f:
-            json.dump(cc_entries, f, indent=2)
 
         entry = {
             "video_id": video_id,
@@ -280,29 +457,98 @@ def main():
             "domain": domain,
             "video_path": str(video_path),
             "ground_truth_file": str(gt_file),
-            "asr_file": str(asr_file),
-            "screenapp_file": str(sa_file),
             "ground_truth_chars": len(gt_text),
-            "asr_chars": len(asr_text),
         }
+
+        # Add ASR info if transcript is available
+        asr_file = transcripts_dir / f"{video_id}_asr.txt"
+        sa_file = transcripts_dir / f"{video_id}_screenapp.json"
+        if asr_file.exists():
+            entry["asr_file"] = str(asr_file)
+            entry["asr_chars"] = len(asr_file.read_text())
+        if sa_file.exists():
+            entry["screenapp_file"] = str(sa_file)
+
         manifest.append(entry)
         collected += 1
-        print(f"     COLLECTED ({collected}/{args.max_videos})\n")
+        print(f"     {'UPLOADED' if args.upload_only else 'COLLECTED'} ({collected}/{args.max_videos})\n")
+
+    # Save upload tracking for collect-only pass
+    if upload_tracking:
+        tracking_file = output_dir / "upload_tracking.json"
+        with open(tracking_file, "w") as f:
+            json.dump(upload_tracking, f, indent=2)
 
     # Save manifest
     manifest_file = output_dir / "manifest.json"
     with open(manifest_file, "w") as f:
         json.dump(manifest, f, indent=2)
 
-    print(f"\n=== Collection Complete ===")
-    print(f"Videos collected: {collected}")
+    print(f"\n=== {'Upload' if args.upload_only else 'Collection'} Complete ===")
+    print(f"Videos processed: {collected}")
     print(f"Manifest: {manifest_file}")
+
+    if args.upload_only:
+        print(f"\nNext step: wait for ScreenApp to finish transcribing, then run:")
+        print(f"  python scripts/collect_dataset.py --output {args.output} --collect-only")
 
     from collections import Counter
     accent_counts = Counter(e["accent"] for e in manifest)
     print(f"\nAccent distribution:")
     for accent, count in accent_counts.most_common():
         print(f"  {accent}: {count}")
+
+
+def _rebuild_manifest(output_dir: Path, transcripts_dir: Path, videos_dir: Path):
+    """Rebuild manifest.json from collected files on disk."""
+    manifest = []
+
+    for gt_file in sorted(transcripts_dir.glob("*_ground_truth.txt")):
+        video_id = gt_file.stem.replace("_ground_truth", "")
+
+        # Find matching files
+        sa_file = transcripts_dir / f"{video_id}_screenapp.json"
+        asr_file = transcripts_dir / f"{video_id}_asr.txt"
+        video_path = None
+        for ext in ("mp4", "mkv", "webm"):
+            candidate = videos_dir / f"{video_id}.{ext}"
+            if candidate.exists():
+                video_path = str(candidate)
+                break
+
+        if not sa_file.exists() or not asr_file.exists():
+            continue
+
+        # Find video info from curated list
+        accent = "unknown"
+        domain = "unknown"
+        title = video_id
+        for vid_id, t, a, d in CURATED_VIDEOS:
+            if vid_id == video_id:
+                title, accent, domain = t, a, d
+                break
+
+        entry = {
+            "video_id": video_id,
+            "title": title,
+            "accent": accent,
+            "domain": domain,
+            "video_path": video_path or "",
+            "ground_truth_file": str(gt_file),
+            "asr_file": str(asr_file),
+            "screenapp_file": str(sa_file),
+            "ground_truth_chars": len(gt_file.read_text()),
+            "asr_chars": len(asr_file.read_text()),
+        }
+        manifest.append(entry)
+        print(f"  Added to manifest: {video_id} ({title[:40]})")
+
+    manifest_file = output_dir / "manifest.json"
+    with open(manifest_file, "w") as f:
+        json.dump(manifest, f, indent=2)
+
+    print(f"\nManifest rebuilt: {len(manifest)} videos")
+    print(f"Saved to: {manifest_file}")
 
 
 if __name__ == "__main__":
