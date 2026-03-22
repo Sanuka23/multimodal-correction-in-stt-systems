@@ -19,7 +19,11 @@ import time
 from pathlib import Path
 
 # Curated video list: (video_id, title, accent_tag, domain_tag)
+# Categories:
+#   Clean audio: conference stages, professional recordings
+#   Noisy audio: panel discussions, audience Q&A, outdoor, cafe, multi-speaker overlap
 CURATED_VIDEOS = [
+    # === CLEAN AUDIO — Conference talks with slides ===
     # Google I/O — human CC, speaker + slides
     ("lyRPyRKHO8M", "Google IO 2023 Keynote Gemini Intro", "american", "ml"),
     ("ID83x7RgqHQ", "Google IO 2024 NotebookLM Deep Dive", "american", "ml"),
@@ -43,22 +47,38 @@ CURATED_VIDEOS = [
     ("2ePf9rue1Ao", "DeepMind AlphaFold Talk", "british", "research"),
     # East Asian accent
     ("dDfgA0DGctE", "Interspeech 2022 Self-supervised Speech", "east_asian", "research"),
-    # Extra
     ("3K0lnd3n-As", "ACL 2023 LLM Survey Talk", "south_asian", "research"),
+
+    # === NOISY AUDIO — challenging conditions for ASR ===
+    # Panel discussions (multiple speakers, cross-talk, audience noise)
+    ("Sq1QZB5baNw", "AI Panel Discussion Stanford HAI", "american", "ml"),
+    ("LPZh9BOjkQs", "Google Cloud Next Panel Discussion", "american", "tech"),
+    # Audience Q&A sessions (room echo, distant mic, background chatter)
+    ("nG0iB4MJIF0", "NeurIPS Q&A Session Audience Questions", "american", "research"),
+    ("x7X9w_GIm1s", "PyCon Lightning Talks Noisy Room", "american", "tech"),
+    # Podcast/interview style (overlapping speech, casual, varied audio quality)
+    ("zjkBMFhNj_g", "Lex Fridman Podcast Interview AI", "american", "ml"),
+    ("Mde2q7GFCrw", "The AI Podcast NVIDIA Jensen Huang", "east_asian", "tech"),
+    # Live coding/demo (keyboard noise, typing, multiple audio sources)
+    ("KZ1kHUbQRRk", "Live Coding Session Python Conference", "european", "tech"),
+    # Meeting recordings (realistic ScreenApp use case — cross-talk, background)
+    ("DHjqpvDnNGE", "Remote Meeting Recording Team Standup", "american", "product"),
+    # Webinar with poor audio (common in real-world meetings)
+    ("ZnNpS-et3iI", "Startup Pitch Day Multiple Speakers", "south_asian", "product"),
+    # Outdoor/cafe interview (wind, traffic, ambient noise)
+    ("GJDNkVDGM_s", "Tech Interview Outdoor Background Noise", "british", "tech"),
 ]
 
 
 def check_has_human_captions(video_id: str) -> bool:
-    """Return True if video has human-written (non-auto-generated) English captions."""
+    """Return True if video has English captions (human or auto-generated)."""
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        api = YouTubeTranscriptApi()
+        transcript_list = api.list(video_id)
         for t in transcript_list:
-            if not t.is_generated and t.language_code.startswith("en"):
-                return True
-        # Also accept auto-generated as fallback (some conference videos only have those)
-        for t in transcript_list:
-            if t.language_code.startswith("en"):
+            lang = t.language_code if hasattr(t, 'language_code') else str(t)
+            if 'en' in str(lang).lower():
                 return True
         return False
     except Exception:
@@ -69,16 +89,20 @@ def fetch_ground_truth(video_id: str) -> list:
     """Fetch CC as list of {text, start, duration} dicts."""
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        # Prefer manually created
-        for t in transcript_list:
-            if not t.is_generated and t.language_code == "en":
-                return t.fetch()
-        # Fallback: any English (including auto)
-        for t in transcript_list:
-            if t.language_code.startswith("en"):
-                return t.fetch()
-        return []
+        api = YouTubeTranscriptApi()
+
+        # Fetch English transcript
+        result = api.fetch(video_id, languages=['en'])
+
+        # Convert FetchedTranscriptSnippet objects to dicts
+        entries = []
+        for snippet in result.snippets if hasattr(result, 'snippets') else result:
+            entries.append({
+                "text": snippet.text if hasattr(snippet, 'text') else str(snippet),
+                "start": snippet.start if hasattr(snippet, 'start') else 0,
+                "duration": snippet.duration if hasattr(snippet, 'duration') else 0,
+            })
+        return entries
     except Exception as e:
         print(f"  [WARN] CC fetch failed for {video_id}: {e}")
         return []
@@ -114,50 +138,31 @@ def download_video(video_id: str, output_dir: str) -> str | None:
 def upload_to_screenapp(video_path: str) -> dict | None:
     """Upload video to ScreenApp and get transcript via its ASR pipeline.
 
-    Uses the same ScreenAppTranscriber from training/screenapp_transcribe.py
-    to get real production ASR output (Groq/Whisper/Gemini).
+    Uses ScreenAppTranscriber.transcribe_file() which handles:
+    upload → poll for completion → retrieve transcript.
+    Returns real production ASR output (Groq/Whisper/Gemini).
     """
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from training.screenapp_transcribe import ScreenAppTranscriber
 
     try:
         transcriber = ScreenAppTranscriber()
-        print(f"     Uploading to ScreenApp...", end=" ", flush=True)
 
-        # Upload the video file
-        file_id = transcriber.upload_file(video_path)
-        if not file_id:
-            print("FAILED — upload returned no file_id")
+        # transcribe_file handles upload + polling + retrieval in one call
+        result = transcriber.transcribe_file(video_path)
+        if not result:
             return None
-        print(f"OK (file_id={file_id[:8]}...)")
 
-        # Poll for transcript
-        print(f"     Waiting for transcript...", end=" ", flush=True)
-        transcript_text = transcriber.poll_transcript(file_id)
+        transcript_text = result.get("transcript_text", "")
         if not transcript_text:
-            print("FAILED — no transcript returned")
             return None
-        print(f"OK ({len(transcript_text)} chars)")
 
-        # Get full file metadata for segments
-        file_data = transcriber.get_file(file_id)
-        segments = []
-        if file_data:
-            text_data = file_data.get("textData", {})
-            raw_segments = text_data.get("segments", [])
-            for i, seg in enumerate(raw_segments):
-                segments.append({
-                    "id": i,
-                    "start": seg.get("start", 0),
-                    "end": seg.get("end", 0),
-                    "text": seg.get("text", "").strip(),
-                    "words": seg.get("words", []),
-                })
+        print(f"     Transcript received ({len(transcript_text)} chars)")
 
         return {
             "text": transcript_text,
-            "segments": segments,
-            "file_id": file_id,
+            "segments": result.get("segments", []),
+            "file_id": result.get("file_id", ""),
         }
 
     except Exception as e:
