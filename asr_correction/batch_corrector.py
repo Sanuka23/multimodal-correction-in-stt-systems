@@ -108,6 +108,7 @@ def correct_transcript_batch(
     vocab_terms: List[dict],
     ocr_provider=None,
     config: CorrectionConfig = None,
+    lip_hints: Optional[dict] = None,
 ) -> Tuple[dict, CorrectionReport]:
     """Correct transcript by sending whole chunks to the model.
 
@@ -197,8 +198,21 @@ def correct_transcript_batch(
             logger.info("  Dry-run: skipping inference")
             continue
 
+        # Look up lip reading hints for this chunk's time range
+        chunk_lip_hint = None
+        if lip_hints and segments:
+            # Estimate time range for this chunk based on character position
+            from .text_utils import estimate_timestamp_for_position
+            chunk_ts_start = estimate_timestamp_for_position(full_text, chunk["start"], segments)
+            chunk_ts_end = estimate_timestamp_for_position(full_text, chunk["end"], segments)
+            for (ts_start, ts_end), hint_str in lip_hints.items():
+                # Check if any lip hint overlaps this chunk's time range
+                if ts_start <= chunk_ts_end and ts_end >= chunk_ts_start:
+                    chunk_lip_hint = hint_str
+                    break
+
         # Build prompt and run inference — changes-only format, small output
-        prompt = build_batch_prompt(chunk_text, term_names, ocr_hints)
+        prompt = build_batch_prompt(chunk_text, term_names, ocr_hints, lip_hint=chunk_lip_hint)
         result_data = run_inference(
             prompt, BATCH_SYSTEM_PROMPT, model, tokenizer,
             max_tokens=256,  # Only need changes list, not full text

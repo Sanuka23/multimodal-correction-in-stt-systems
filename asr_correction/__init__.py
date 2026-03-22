@@ -80,8 +80,10 @@ def correct_transcript(
     logger.info("Step 1: Merged %d domain + %d custom → %d vocab terms",
                 len(domain_vocab), len(custom_vocabulary or []), len(vocab_terms))
 
-    # Step 2: Segment selection (rules + optional model check)
+    # Step 2: Error detection — LLM Pass 1 (primary) → rule-based (fallback)
     from .model import load_model
+    from .llm_detector import detect_errors
+
     model, tokenizer = None, None
     if not config.dry_run:
         try:
@@ -94,10 +96,8 @@ def correct_transcript(
         except Exception as e:
             logger.error("Model loading failed: %s", e)
 
-    analyses = select_segments(
-        transcript, vocab_terms, model, tokenizer,
-        context_window=config.context_window_chars,
-        ocr_window_seconds=config.ocr_window_seconds,
+    analyses = detect_errors(
+        transcript, vocab_terms, model, tokenizer, config=config,
     )
 
     flagged = [a for a in analyses if a.needs_correction]
@@ -114,7 +114,7 @@ def correct_transcript(
         )
         return transcript, report
 
-    logger.info("Step 2: Segment selector found %d candidates in %d/%d segments",
+    logger.info("Step 2: Found %d candidates in %d/%d segments",
                 len(candidates), len(flagged), len(analyses))
     for i, c in enumerate(candidates):
         logger.info("  Candidate %d: '%s' (error='%s', category='%s', ts=%.1f-%.1f)",
@@ -149,12 +149,34 @@ def correct_transcript(
     else:
         logger.info("Step 3: No video URL or OCR provider — skipping OCR")
 
+    # Step 3.5: Pre-collect AVSR hints for flagged segments (before batch correction)
+    lip_hints = {}  # (ts_start, ts_end) → hint_string
+    avsr_needs = [a for a in flagged if a.needs_avsr]
+    if avsr_provider and video_url and avsr_needs and not config.dry_run:
+        avsr_pre = avsr_needs[:config.avsr_max_segments]
+        logger.info("Step 3.5: Pre-collecting AVSR hints for %d segments", len(avsr_pre))
+        for analysis in avsr_pre:
+            try:
+                hint = avsr_provider.analyze_segment(
+                    video_url, analysis.start, analysis.end
+                )
+                if hint and hint.face_detected:
+                    lip_hints[(analysis.start, analysis.end)] = hint.to_prompt_hint()
+            except Exception as e:
+                logger.warning("AVSR pre-collection failed for [%.1f-%.1f]: %s",
+                             analysis.start, analysis.end, e)
+        if lip_hints:
+            logger.info("Step 3.5: Collected %d AVSR hints", len(lip_hints))
+    else:
+        logger.info("Step 3.5: AVSR pre-collection skipped")
+
     # Step 4: Batch correction — send whole transcript chunks to model
     logger.info("Step 4: Batch correction (whole transcript, not word-by-word)...")
     enhanced, report = correct_transcript_batch(
         transcript, file_id, vocab_terms,
         ocr_provider=targeted_ocr_provider,
         config=config,
+        lip_hints=lip_hints,
     )
     logger.info("Step 4 complete: %d corrections applied in %.0fms",
                 report.corrections_applied, report.processing_time_ms)
