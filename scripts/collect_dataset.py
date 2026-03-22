@@ -111,35 +111,57 @@ def download_video(video_id: str, output_dir: str) -> str | None:
         return None
 
 
-def run_whisper_cli(video_path: str, output_dir: str) -> dict | None:
-    """Run Whisper via CLI to produce ASR transcript with word timestamps."""
-    json_path = os.path.join(output_dir, Path(video_path).stem + ".json")
+def upload_to_screenapp(video_path: str) -> dict | None:
+    """Upload video to ScreenApp and get transcript via its ASR pipeline.
 
-    cmd = [
-        sys.executable, "-m", "whisper",
-        video_path,
-        "--model", "base",
-        "--language", "en",
-        "--output_format", "json",
-        "--output_dir", output_dir,
-        "--word_timestamps", "True",
-    ]
+    Uses the same ScreenAppTranscriber from training/screenapp_transcribe.py
+    to get real production ASR output (Groq/Whisper/Gemini).
+    """
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from training.screenapp_transcribe import ScreenAppTranscriber
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        if result.returncode != 0:
-            print(f"  [ERROR] Whisper failed: {result.stderr[:200]}")
-            return None
+        transcriber = ScreenAppTranscriber()
+        print(f"     Uploading to ScreenApp...", end=" ", flush=True)
 
-        if os.path.exists(json_path):
-            with open(json_path) as f:
-                return json.load(f)
-        return None
-    except subprocess.TimeoutExpired:
-        print("  [ERROR] Whisper timed out (10 min)")
-        return None
+        # Upload the video file
+        file_id = transcriber.upload_file(video_path)
+        if not file_id:
+            print("FAILED — upload returned no file_id")
+            return None
+        print(f"OK (file_id={file_id[:8]}...)")
+
+        # Poll for transcript
+        print(f"     Waiting for transcript...", end=" ", flush=True)
+        transcript_text = transcriber.poll_transcript(file_id)
+        if not transcript_text:
+            print("FAILED — no transcript returned")
+            return None
+        print(f"OK ({len(transcript_text)} chars)")
+
+        # Get full file metadata for segments
+        file_data = transcriber.get_file(file_id)
+        segments = []
+        if file_data:
+            text_data = file_data.get("textData", {})
+            raw_segments = text_data.get("segments", [])
+            for i, seg in enumerate(raw_segments):
+                segments.append({
+                    "id": i,
+                    "start": seg.get("start", 0),
+                    "end": seg.get("end", 0),
+                    "text": seg.get("text", "").strip(),
+                    "words": seg.get("words", []),
+                })
+
+        return {
+            "text": transcript_text,
+            "segments": segments,
+            "file_id": file_id,
+        }
+
     except Exception as e:
-        print(f"  [ERROR] Whisper error: {e}")
+        print(f"FAILED — {e}")
         return None
 
 
@@ -148,45 +170,12 @@ def cc_to_text(cc_entries: list) -> str:
     return " ".join(e.get("text", "").strip() for e in cc_entries if e.get("text")).strip()
 
 
-def segments_to_text(segments: list) -> str:
-    """Collapse Whisper segments into flat text."""
-    return " ".join(s.get("text", "").strip() for s in segments).strip()
-
-
-def build_screenapp_transcript(whisper_result: dict) -> dict:
-    """Convert Whisper output to ScreenApp OutputTranscript format."""
-    segments = whisper_result.get("segments", [])
-    return {
-        "text": segments_to_text(segments),
-        "segments": [
-            {
-                "id": i,
-                "start": s.get("start", 0),
-                "end": s.get("end", 0),
-                "text": s.get("text", "").strip(),
-                "words": [
-                    {
-                        "word": w.get("word", ""),
-                        "start": w.get("start", 0),
-                        "end": w.get("end", 0),
-                        "probability": w.get("probability", 1.0),
-                    }
-                    for w in s.get("words", [])
-                ],
-            }
-            for i, s in enumerate(segments)
-        ],
-    }
-
-
 def main():
     parser = argparse.ArgumentParser(description="Collect YouTube evaluation dataset")
     parser.add_argument("--output", default="data/eval_dataset")
     parser.add_argument("--max-videos", type=int, default=15)
     parser.add_argument("--skip-download", action="store_true",
                         help="Skip video download if already present")
-    parser.add_argument("--skip-whisper", action="store_true",
-                        help="Skip Whisper transcription if JSON already exists")
     args = parser.parse_args()
 
     output_dir = Path(args.output)
@@ -246,27 +235,22 @@ def main():
             print("     SKIP — no video")
             continue
 
-        # Run Whisper
-        whisper_json = transcripts_dir / f"{video_id}_whisper.json"
-        if whisper_json.exists() and args.skip_whisper:
-            print(f"     Whisper transcript exists, loading...")
-            with open(whisper_json) as f:
-                whisper_result = json.load(f)
+        # Get ASR transcript via ScreenApp (real production pipeline)
+        sa_file = transcripts_dir / f"{video_id}_screenapp.json"
+        if sa_file.exists():
+            print(f"     ScreenApp transcript exists, loading...")
+            with open(sa_file) as f:
+                sa_transcript = json.load(f)
         else:
-            print(f"     Running Whisper base...", end=" ", flush=True)
-            whisper_result = run_whisper_cli(video_path, str(transcripts_dir))
-            if whisper_result is None:
-                print("SKIP — Whisper failed")
+            sa_transcript = upload_to_screenapp(video_path)
+            if sa_transcript is None:
+                print("     SKIP — ScreenApp transcription failed")
                 continue
-            # Rename output to our naming convention
-            default_name = transcripts_dir / (Path(video_path).stem + ".json")
-            if default_name.exists() and not whisper_json.exists():
-                default_name.rename(whisper_json)
-            print(f"OK ({len(whisper_result.get('segments', []))} segments)")
 
-        # Build ScreenApp transcript
-        sa_transcript = build_screenapp_transcript(whisper_result)
-        asr_text = sa_transcript["text"]
+        asr_text = sa_transcript.get("text", "")
+        if not asr_text or len(asr_text) < 50:
+            print("     SKIP — transcript too short")
+            continue
 
         # Save files
         gt_file = transcripts_dir / f"{video_id}_ground_truth.txt"
@@ -275,9 +259,9 @@ def main():
         asr_file = transcripts_dir / f"{video_id}_asr.txt"
         asr_file.write_text(asr_text)
 
-        sa_file = transcripts_dir / f"{video_id}_screenapp.json"
-        with open(sa_file, "w") as f:
-            json.dump(sa_transcript, f, indent=2)
+        if not sa_file.exists():
+            with open(sa_file, "w") as f:
+                json.dump(sa_transcript, f, indent=2)
 
         # Save CC with timestamps for reference
         cc_file = transcripts_dir / f"{video_id}_cc.json"
@@ -293,7 +277,6 @@ def main():
             "ground_truth_file": str(gt_file),
             "asr_file": str(asr_file),
             "screenapp_file": str(sa_file),
-            "whisper_file": str(whisper_json),
             "ground_truth_chars": len(gt_text),
             "asr_chars": len(asr_text),
         }
