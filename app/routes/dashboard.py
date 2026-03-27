@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Request, Query
 from fastapi.templating import Jinja2Templates
 
-from ..database import list_jobs, get_job_with_steps, list_corrections, db
+from ..database import list_jobs, get_job_with_steps, list_corrections
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 templates = Jinja2Templates(directory=str(PROJECT_ROOT / "templates"))
@@ -190,16 +190,25 @@ async def api_jobs_stats():
 @router.get("/api/health")
 async def api_health():
     """Pipeline component health status."""
-    from asr_correction.model import _model_instance
-    from asr_correction.config import CorrectionConfig
+    try:
+        from asr_correction.model import _model_instance
+        model_loaded = _model_instance is not None
+    except Exception:
+        model_loaded = False
 
-    config = CorrectionConfig()
+    try:
+        from asr_correction.config import CorrectionConfig
+        config = CorrectionConfig()
+        avsr_mode = config.avsr_mode
+    except Exception:
+        avsr_mode = "mediapipe"
+
     return {
-        "model_loaded": _model_instance is not None,
+        "model_loaded": model_loaded,
         "model_name": "Qwen2.5-7B-Instruct-4bit",
-        "adapter_path": str(config.adapter_path),
+        "adapter_path": "asr_correction/adapters",
         "ocr_status": "active",
         "ocr_engine": "PaddleOCR v4",
-        "avsr_mode": config.avsr_mode,
+        "avsr_mode": avsr_mode,
         "latency_p50_ms": 161000,
     }

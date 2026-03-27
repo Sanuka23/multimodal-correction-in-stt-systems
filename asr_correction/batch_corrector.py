@@ -36,14 +36,16 @@ def build_batch_prompt(
     This is much faster because the model only outputs the diff (~256 tokens)
     instead of repeating the entire transcript (~2000 chars).
     """
-    vocab_str = json.dumps(vocab_terms[:50])
-
     prompt = (
-        "Review this ASR transcript and find words that are wrong based on the vocabulary.\n"
+        "Review this ASR transcript and find words that are clearly wrong.\n"
+        "Look for misspelled names, garbled technical terms, and words that don't fit the context.\n"
         "Return ONLY the changes as JSON. Do NOT repeat the full transcript.\n\n"
         f"ASR transcript: {transcript_chunk}\n"
-        f"Vocabulary: {vocab_str}\n"
     )
+
+    if vocab_terms:
+        vocab_str = json.dumps(vocab_terms[:50])
+        prompt += f"Known vocabulary (check especially): {vocab_str}\n"
 
     if ocr_hints:
         prompt += (
@@ -68,6 +70,77 @@ BATCH_SYSTEM_PROMPT = (
     "segment and context signals, detect errors in context-critical terms and "
     "output the corrected transcript with changes noted."
 )
+
+VALIDATION_SYSTEM_PROMPT = (
+    "You are an ASR transcript quality checker. Most proposed corrections are good — "
+    "they fix speech recognition errors. Only reject corrections that are clearly wrong."
+)
+
+
+def _validate_changes(
+    changes: List[tuple],
+    chunk_text: str,
+    model,
+    tokenizer,
+) -> List[tuple]:
+    """Validate proposed corrections — only reject clearly harmful ones.
+
+    Most ASR corrections are good (fixing garbled speech). Only reject:
+    - Replacing one real term/name with a completely different real term/name
+    - Changes that make the text nonsensical
+    """
+    from .model import run_inference_raw
+
+    if not changes or model is None:
+        return changes
+
+    changes_list = "\n".join(
+        f'  {i+1}. "{old}" → "{new}"' for i, (old, new, _) in enumerate(changes)
+    )
+
+    prompt = (
+        "These corrections fix speech recognition errors in a meeting transcript.\n"
+        "Most are CORRECT. Only flag the ones that are CLEARLY WRONG.\n\n"
+        f"Transcript:\n{chunk_text[:1500]}\n\n"
+        f"Proposed corrections:\n{changes_list}\n\n"
+        "REJECT a correction ONLY if:\n"
+        "- It replaces one REAL person's name with a DIFFERENT person's name (e.g. Sheldon→Tim, Dinuka→Kieran)\n"
+        "- It replaces one REAL product/tool with a DIFFERENT product/tool (e.g. TypeSense→Qdrant, GPT-2→Gemini — both are real but different things)\n"
+        "- The replacement is gibberish or makes the sentence nonsensical\n\n"
+        "DO NOT reject if:\n"
+        "- It fixes garbled/misspelled words (GROC→Groq, Lama→Llama, OpenDI→OpenAI, Cloudware→Cloudflare)\n"
+        "- The original is clearly NOT a real word and the replacement IS (fear→fix in context of bug fixing)\n"
+        "- It corrects a name/term to proper spelling where original sounds similar\n\n"
+        'Respond ONLY with JSON: {"reject": [2, 5]}\n'
+        "List ONLY the numbers that are CLEARLY WRONG. "
+        'If all look fine: {"reject": []}'
+    )
+
+    try:
+        raw = run_inference_raw(prompt, VALIDATION_SYSTEM_PROMPT, model, tokenizer, max_tokens=128)
+
+        json_match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not json_match:
+            logger.debug("Validation: could not parse response, keeping all changes")
+            return changes
+
+        parsed = json.loads(json_match.group())
+        reject_nums = set(parsed.get("reject", []))
+
+        if reject_nums:
+            validated = []
+            for i, change in enumerate(changes):
+                if (i + 1) in reject_nums:
+                    logger.info("    Rejected: '%s' → '%s' (failed context validation)",
+                                change[0], change[1])
+                else:
+                    validated.append(change)
+            return validated
+
+    except Exception as e:
+        logger.debug("Validation failed (%s), keeping all changes", e)
+
+    return changes
 
 
 def _chunk_transcript(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[dict]:
@@ -249,6 +322,14 @@ def correct_transcript_batch(
             continue
 
         if changes:
+            # Step 4.5: Validate each change — does the replacement make sense in context?
+            validated_changes = _validate_changes(changes, chunk_text, model, tokenizer)
+            if len(validated_changes) < len(changes):
+                rejected = len(changes) - len(validated_changes)
+                logger.info("  Chunk %d: %d/%d changes validated (%d rejected by context check)",
+                            i + 1, len(validated_changes), len(changes), rejected)
+            changes = validated_changes
+
             logger.info("  Chunk %d: %d valid changes (confidence=%.2f): %s",
                         i + 1, len(changes), confidence,
                         [f"{o}→{n}" for o, n, _ in changes[:5]])

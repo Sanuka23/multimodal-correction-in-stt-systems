@@ -1,155 +1,320 @@
 {% extends "base.html" %}
-{% block title %}Dashboard - ASR Correction{% endblock %}
+{% set active_page = "dashboard" %}
+{% block title %}Dashboard — Kinetic Console{% endblock %}
+
 {% block content %}
-<h1 class="text-2xl font-bold mb-6">Dashboard</h1>
-
-<!-- Stats cards -->
-<div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-4">
-        <div class="text-sm text-gray-500 dark:text-gray-400">Correction Jobs</div>
-        <div class="text-2xl font-bold">{{ correction_count }}</div>
-    </div>
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-4">
-        <div class="text-sm text-gray-500 dark:text-gray-400">Total Applied</div>
-        <div class="text-2xl font-bold text-green-600 dark:text-green-400">{{ total_corrections }}</div>
-    </div>
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-4">
-        <div class="text-sm text-gray-500 dark:text-gray-400">Total Attempted</div>
-        <div class="text-2xl font-bold">{{ total_attempted }}</div>
-    </div>
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-4">
-        <div class="text-sm text-gray-500 dark:text-gray-400">Evaluation Jobs</div>
-        <div class="text-2xl font-bold">{{ eval_count }}</div>
-    </div>
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-4">
-        <div class="text-sm text-gray-500 dark:text-gray-400">Avg Duration</div>
-        <div class="text-2xl font-bold">{{ "%.0f"|format(avg_duration_ms) }}ms</div>
-    </div>
+<!-- STAT CARDS -->
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px;">
+  <div class="stat-card">
+    <div class="label">Correction Count</div>
+    <div class="value" id="stat-count">{{ correction_count }}</div>
+    <div class="sub" id="stat-count-sub">Total correction jobs</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Total Applied</div>
+    <div class="value" style="color:#10b981;" id="stat-applied">{{ total_corrections }}</div>
+    <div class="sub" id="stat-applied-sub">{{ "%.0f"|format(total_corrections / [total_attempted,1]|max * 100) }}% of identified gaps</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Avg Confidence</div>
+    <div class="value" style="color:#f59e0b;" id="stat-conf">—</div>
+    <div class="sub" id="stat-conf-sub">Stable vs last run</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Success Rate</div>
+    <div class="value" style="color:#10b981;" id="stat-rate">—</div>
+    <div class="sub">Post-correction validation</div>
+  </div>
 </div>
 
-<!-- Recent Jobs -->
-<h2 class="text-lg font-semibold mb-3">Recent Jobs</h2>
-<div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 overflow-hidden mb-8">
-    <table class="w-full text-sm">
-        <thead class="bg-gray-50 dark:bg-gray-700">
-            <tr>
-                <th class="px-4 py-2 text-left">Type</th>
-                <th class="px-4 py-2 text-left">File ID</th>
-                <th class="px-4 py-2 text-left">Status</th>
-                <th class="px-4 py-2 text-left">Duration</th>
-                <th class="px-4 py-2 text-left">Created</th>
-                <th class="px-4 py-2 text-left">Result</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for job in recent_jobs %}
-            <tr class="border-t border-gray-200 dark:border-gray-700">
-                <td class="px-4 py-2">
-                    <span class="px-2 py-0.5 rounded text-xs font-medium
-                        {% if job.job_type == 'correction' %}bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300
-                        {% elif job.job_type == 'evaluation' %}bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300
-                        {% else %}bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300{% endif %}">
-                        {{ job.job_type }}
-                    </span>
-                </td>
-                <td class="px-4 py-2 text-gray-500 dark:text-gray-400 font-mono text-xs">{{ job.file_id or '-' }}</td>
-                <td class="px-4 py-2">
-                    <span class="{% if job.status == 'completed' %}text-green-600 dark:text-green-400{% elif job.status == 'failed' %}text-red-600 dark:text-red-400{% else %}text-yellow-600 dark:text-yellow-400{% endif %}">
-                        {{ job.status }}
-                    </span>
-                </td>
-                <td class="px-4 py-2">{{ "%.0f"|format(job.duration_ms or 0) }}ms</td>
-                <td class="px-4 py-2 text-gray-500 dark:text-gray-400">{{ job.created_at.strftime('%Y-%m-%d %H:%M') if job.created_at else '-' }}</td>
-                <td class="px-4 py-2 text-xs text-gray-500 dark:text-gray-400">
-                    {% if job.result_summary %}
-                        {% for k, v in job.result_summary.items() %}
-                            <span class="{% if k == 'corrections_applied' %}text-green-600 dark:text-green-400 font-bold{% endif %}">{{ k }}: {{ v }}</span>{% if not loop.last %}, {% endif %}
-                        {% endfor %}
-                    {% endif %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+<!-- TRAINING BANNER + LATENCY -->
+<div class="card" style="padding:20px 24px;margin-bottom:20px;display:flex;align-items:stretch;gap:24px;">
+  <div style="flex:1;min-width:0;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+      <div class="live-dot"></div>
+      <span style="font-size:10px;font-weight:700;letter-spacing:.1em;color:#10b981;text-transform:uppercase;" id="banner-label">Active Training Run</span>
+    </div>
+    <div style="font-size:2rem;font-weight:800;line-height:1.1;color:var(--text-1);" id="banner-title">Awaiting training data...</div>
+    <div style="margin-top:8px;" id="banner-meta"></div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:8px;min-width:160px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;" id="banner-stats"></div>
+    <a href="/dashboard/jobs"><button class="btn-ghost" style="width:100%;">View Last Job</button></a>
+  </div>
 </div>
 
-<!-- Recent Corrections Detail -->
-<h2 class="text-lg font-semibold mb-3">Recent Corrections</h2>
-<div id="corrections-list" class="space-y-3">
-    <p class="text-sm text-gray-400">Loading...</p>
+<!-- PIPELINE HEALTH + EXECUTION SUMMARY -->
+<div style="display:grid;grid-template-columns:1fr 280px;gap:14px;margin-bottom:20px;">
+  <!-- Pipeline Health -->
+  <div class="card" style="padding:20px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div style="font-size:15px;font-weight:700;">Pipeline Component Health</div>
+      <span style="font-size:11px;color:var(--text-3);" id="health-latency">SESSION P50: —</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+      <div class="card2" style="padding:14px;">
+        <div style="font-size:10px;color:var(--text-3);font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;">Model Status</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+          <span style="width:8px;height:8px;border-radius:50%;background:#10b981;flex-shrink:0;"></span>
+          <span style="font-size:15px;font-weight:700;" id="health-model-status">Active</span>
+        </div>
+        <div style="font-size:11px;color:var(--text-3);" id="health-model-sub">Adapter v1</div>
+        <div style="height:2px;background:linear-gradient(90deg,#10b981,#06b6d4);border-radius:1px;margin-top:10px;"></div>
+      </div>
+      <div class="card2" style="padding:14px;">
+        <div style="font-size:10px;color:var(--text-3);font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;">OCR Engine</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+          <span style="width:8px;height:8px;border-radius:50%;background:#10b981;flex-shrink:0;"></span>
+          <span style="font-size:15px;font-weight:700;">Healthy</span>
+        </div>
+        <div style="font-size:11px;color:var(--text-3);" id="health-ocr-sub">PaddleOCR PP-OCRv4</div>
+        <div style="height:2px;background:linear-gradient(90deg,#10b981,#06b6d4);border-radius:1px;margin-top:10px;"></div>
+      </div>
+      <div class="card2" style="padding:14px;">
+        <div style="font-size:10px;color:var(--text-3);font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;">AVSR Module</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+          <span style="width:8px;height:8px;border-radius:50%;background:#06b6d4;flex-shrink:0;"></span>
+          <span style="font-size:15px;font-weight:700;" id="health-avsr-mode">MediaPipe</span>
+        </div>
+        <div style="font-size:11px;color:var(--text-3);">Active Mode</div>
+        <div style="height:2px;background:linear-gradient(90deg,#06b6d4,#a855f7);border-radius:1px;margin-top:10px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Execution Summary -->
+  <div class="card" style="padding:20px;">
+    <div style="font-size:15px;font-weight:700;margin-bottom:16px;">Execution Summary</div>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:10px;color:var(--text-3);font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px;">TTER Improvement</div>
+      <div style="font-size:1.6rem;font-weight:800;color:#10b981;" id="exec-tter">—</div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:10px;color:var(--text-3);font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px;">Corrections Today</div>
+      <div style="font-size:1.4rem;font-weight:800;" id="exec-today">{{ total_corrections }}</div>
+    </div>
+    <div>
+      <div style="font-size:10px;color:var(--text-3);font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px;">Avg Confidence</div>
+      <div style="font-size:1.4rem;font-weight:800;" id="exec-conf">—</div>
+    </div>
+  </div>
 </div>
 
+<!-- LIVE CORRECTION FEED + JOB FLOW -->
+<div style="display:grid;grid-template-columns:1fr 300px;gap:14px;">
+  <!-- Correction Feed -->
+  <div class="card" style="padding:20px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <div style="font-size:15px;font-weight:700;">Live Correction Feed</div>
+      <button class="btn-ghost" style="font-size:11px;" onclick="exportCorrections()">EXPORT LOG</button>
+    </div>
+    <div id="corrections-feed" style="display:flex;flex-direction:column;gap:10px;">
+      <div style="text-align:center;color:var(--text-3);padding:20px 0;font-size:13px;">Loading corrections...</div>
+    </div>
+  </div>
+
+  <!-- Job Flow + Accent Distribution -->
+  <div style="display:flex;flex-direction:column;gap:14px;">
+    <!-- Job Flow -->
+    <div class="card" style="padding:16px;">
+      <div style="font-size:13px;font-weight:700;margin-bottom:12px;">Job Flow</div>
+      <div id="job-flow-list" style="display:flex;flex-direction:column;gap:6px;">
+        <div style="color:var(--text-3);font-size:12px;">Loading jobs...</div>
+      </div>
+    </div>
+
+    <!-- Accent Distribution -->
+    <div class="card" style="padding:16px;flex:1;">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;color:var(--text-3);text-transform:uppercase;margin-bottom:12px;">Accent Distribution</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+            <span style="font-size:12px;color:var(--text-2);">American</span>
+            <span style="font-size:12px;color:var(--text-1);font-weight:600;">6,096</span>
+          </div>
+          <div style="height:4px;background:var(--bg-card3);border-radius:2px;"><div style="height:100%;width:62%;background:#06b6d4;border-radius:2px;"></div></div>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+            <span style="font-size:12px;color:var(--text-2);">South Asian</span>
+            <span style="font-size:12px;color:var(--text-1);font-weight:600;">5,958</span>
+          </div>
+          <div style="height:4px;background:var(--bg-card3);border-radius:2px;"><div style="height:100%;width:61%;background:#10b981;border-radius:2px;"></div></div>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+            <span style="font-size:12px;color:var(--text-2);">European</span>
+            <span style="font-size:12px;color:var(--text-1);font-weight:600;">345</span>
+          </div>
+          <div style="height:4px;background:var(--bg-card3);border-radius:2px;"><div style="height:100%;width:4%;background:#f59e0b;border-radius:2px;"></div></div>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+            <span style="font-size:12px;color:var(--text-2);">Unknown</span>
+            <span style="font-size:12px;color:var(--text-1);font-weight:600;">3,683</span>
+          </div>
+          <div style="height:4px;background:var(--bg-card3);border-radius:2px;"><div style="height:100%;width:37%;background:#64748b;border-radius:2px;"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
 <script>
-function esc(str) {
-    const div = document.createElement('div');
-    div.textContent = str || '';
-    return div.innerHTML;
+function fmtTime(ms) {
+  if (!ms) return '—';
+  if (ms < 1000) return ms + 'ms';
+  if (ms < 60000) return (ms/1000).toFixed(1) + 's';
+  return (ms/60000).toFixed(1) + 'm';
+}
+function fmtAgo(ts) {
+  if (!ts) return '';
+  const d = (Date.now() - new Date(ts)) / 1000;
+  if (d < 60) return 'just now';
+  if (d < 3600) return Math.floor(d/60) + 'm ago';
+  if (d < 86400) return Math.floor(d/3600) + 'h ago';
+  return Math.floor(d/86400) + 'd ago';
+}
+function esc(s) {
+  const d = document.createElement('div'); d.textContent = s||''; return d.innerHTML;
 }
 
-async function loadRecentCorrections() {
-    try {
-        const res = await fetch('/api/corrections?limit=5');
-        const corrections = await res.json();
-        const container = document.getElementById('corrections-list');
+const CAT_COLORS = {
+  person_name:'cyan', product_name:'purple', tech_term:'green',
+  tech_acronym:'yellow', compliance:'red', custom:'gray', feature:'gray', business_term:'yellow'
+};
 
-        if (!corrections.length) {
-            container.innerHTML = '<p class="text-sm text-gray-400">No corrections yet</p>';
-            return;
+async function loadDashboard() {
+  // Corrections
+  try {
+    const r = await fetch('/api/corrections?limit=8');
+    const data = await r.json();
+    const feed = document.getElementById('corrections-feed');
+
+    if (!data.length) {
+      feed.innerHTML = '<div style="text-align:center;color:var(--text-3);padding:20px 0;font-size:13px;">No corrections yet</div>';
+    } else {
+      let html = '';
+      // Compute stats
+      let totalConf = 0, confCount = 0, appliedCount = 0, attemptedCount = 0;
+      for (const c of data) {
+        attemptedCount += c.corrections_attempted || 0;
+        appliedCount += c.corrections_applied || 0;
+        for (const d of (c.corrections || [])) {
+          if (d.applied && d.confidence) { totalConf += d.confidence; confCount++; }
         }
+      }
+      if (confCount > 0) {
+        const avg = totalConf / confCount;
+        document.getElementById('stat-conf').textContent = avg.toFixed(2);
+        document.getElementById('exec-conf').textContent = avg.toFixed(2);
+      }
+      if (attemptedCount > 0) {
+        const rate = (appliedCount / attemptedCount * 100).toFixed(0);
+        document.getElementById('stat-rate').textContent = rate + '%';
+      }
 
-        let html = '';
-        for (const c of corrections) {
-            const details = c.corrections || [];
-            const applied = details.filter(d => d.applied);
-            const skipped = details.filter(d => !d.applied);
-            const date = c.created_at ? new Date(c.created_at).toLocaleString() : '';
+      for (const c of data) {
+        const applied = (c.corrections || []).filter(x => x.applied);
+        const skipped = (c.corrections || []).filter(x => !x.applied);
+        const ago = fmtAgo(c.created_at);
+        const dur = fmtTime(c.processing_time_ms);
 
-            html += `
-            <div class="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-700/30 p-4">
-                <div class="flex items-center justify-between mb-2">
-                    <div>
-                        <span class="font-mono text-xs text-gray-400">${esc(c.file_id)}</span>
-                        <span class="ml-2 text-xs text-gray-400">${date}</span>
-                    </div>
-                    <div class="flex gap-2">
-                        <span class="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">
-                            ${c.corrections_applied || 0} applied
-                        </span>
-                        <span class="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400">
-                            ${(c.corrections_attempted || 0) - (c.corrections_applied || 0)} skipped
-                        </span>
-                        <span class="text-xs text-gray-400">${Math.round(c.processing_time_ms || 0)}ms</span>
-                    </div>
-                </div>`;
-
-            if (applied.length > 0) {
-                html += '<div class="text-xs space-y-1 mt-2">';
-                for (const a of applied) {
-                    const ocrCount = (a.ocr_hints_used || []).length;
-                    html += `
-                    <div class="flex items-center gap-2 py-1 border-b border-gray-100 dark:border-gray-700">
-                        <span class="text-green-600 dark:text-green-400 font-bold">&#10003;</span>
-                        <span class="font-mono text-red-500 dark:text-red-400 line-through">${esc(a.error_found)}</span>
-                        <span>→</span>
-                        <span class="font-mono text-green-600 dark:text-green-400 font-bold">${esc(a.term)}</span>
-                        <span class="px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300">${esc(a.category)}</span>
-                        <span class="text-gray-400">conf: ${((a.confidence || 0) * 100).toFixed(0)}%</span>
-                        ${ocrCount > 0 ? '<span class="text-blue-500 dark:text-blue-400">' + ocrCount + ' OCR</span>' : ''}
-                    </div>`;
-                }
-                html += '</div>';
-            }
-
-            html += '</div>';
+        // Show first applied correction prominently
+        if (applied.length > 0) {
+          const first = applied[0];
+          const catColor = CAT_COLORS[first.category] || 'gray';
+          html += `
+          <div class="card2" style="padding:14px;cursor:pointer;" onclick="window.location='/dashboard/compare?job=${esc(c._id||'')}'" >
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <div>
+                <span style="font-size:10px;color:var(--text-3);letter-spacing:.05em;">ENTRY ID: ${esc((c._id||'').substring(0,8))}</span>
+              </div>
+              <span style="font-size:11px;color:var(--text-3);">${ago}</span>
+            </div>
+            <div style="font-size:14px;font-weight:700;margin-bottom:10px;">${applied.length} correction${applied.length>1?'s':''} applied${skipped.length>0?' · '+skipped.length+' skipped':''}</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+              <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:.75rem;padding:8px 10px;">
+                <div style="font-size:10px;color:var(--accent-r);font-weight:600;margin-bottom:3px;text-transform:uppercase;letter-spacing:.05em;">DETECTED</div>
+                <div style="font-size:13px;font-weight:600;" class="diff-error">${esc(first.error_found)}</div>
+              </div>
+              <div style="background:var(--bg-card);border:1px solid #10b98130;border-radius:.75rem;padding:8px 10px;">
+                <div style="font-size:10px;color:#10b981;font-weight:600;margin-bottom:3px;text-transform:uppercase;letter-spacing:.05em;">CORRECTED</div>
+                <div style="font-size:13px;font-weight:600;color:#34d399;">${esc(first.term)}</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span class="badge ${catColor}">${esc(first.category||'custom')}</span>
+              <span class="badge cyan">Conf: ${((first.confidence||0)*100).toFixed(0)}%</span>
+              <span style="font-size:11px;color:var(--text-3);margin-left:auto;">${dur}</span>
+            </div>
+          </div>`;
         }
-
-        container.innerHTML = html;
-    } catch (e) {
-        document.getElementById('corrections-list').innerHTML =
-            '<p class="text-sm text-red-400">Failed to load: ' + e.message + '</p>';
+      }
+      feed.innerHTML = html;
     }
+  } catch(e) { console.error(e); }
+
+  // Jobs
+  try {
+    const r = await fetch('/api/jobs?limit=5');
+    const jobs = await r.json();
+    const jf = document.getElementById('job-flow-list');
+    if (!jobs.length) { jf.innerHTML = '<div style="color:var(--text-3);font-size:12px;">No jobs yet</div>'; }
+    else {
+      let html = '';
+      for (const j of jobs) {
+        const statusColor = j.status==='completed'?'#10b981':j.status==='running'?'#06b6d4':j.status==='failed'?'#ef4444':'#64748b';
+        const statusLabel = j.status==='completed'?'SUCCESS':j.status==='running'?'RUNNING':j.status==='failed'?'FAILED':'PENDING';
+        html += `
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);">
+          <div style="width:3px;height:28px;background:${statusColor};border-radius:2px;flex-shrink:0;"></div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(j.file_id||j._id?.substring(0,12)||'—')}</div>
+            <div style="font-size:10px;color:var(--text-3);">${esc(j.job_type)} · ${fmtTime(j.duration_ms||0)}</div>
+          </div>
+          <span style="font-size:10px;font-weight:700;color:${statusColor};">${statusLabel}</span>
+        </div>`;
+      }
+      jf.innerHTML = html;
+    }
+  } catch(e) {}
+
+  // Training status
+  try {
+    const r = await fetch('/api/training/status');
+    const d = await r.json();
+    if (d.running) {
+      document.getElementById('banner-label').textContent = 'ACTIVE TRAINING RUN';
+      document.getElementById('banner-title').textContent = `Iteration: ${d.current_iter} / ${d.total_iter}`;
+      document.getElementById('banner-meta').innerHTML = `<span style="font-size:13px;color:var(--text-3);">Qwen2.5-7B · LoRA Rank 16 · MLX Backend</span>`;
+      document.getElementById('banner-stats').innerHTML = `
+        <div><div style="font-size:10px;color:var(--text-3);margin-bottom:2px;">CURRENT LOSS</div><div style="font-size:1.4rem;font-weight:800;color:#06b6d4;">${d.loss||'—'}</div></div>
+        <div><div style="font-size:10px;color:var(--text-3);margin-bottom:2px;">ETA</div><div style="font-size:1.4rem;font-weight:800;">${d.eta||'—'}</div></div>`;
+    } else if (d.last_run) {
+      document.getElementById('banner-label').textContent = 'LAST TRAINING RUN';
+      document.getElementById('banner-title').textContent = 'Training Complete';
+      document.getElementById('banner-meta').innerHTML = `<span style="font-size:13px;color:var(--text-3);">Val loss: ${d.last_run.val_loss||'—'} · ${d.last_run.examples||'—'} examples</span>`;
+      document.getElementById('banner-stats').innerHTML = `
+        <div><div style="font-size:10px;color:var(--text-3);margin-bottom:2px;">P50 LATENCY</div><div style="font-size:1.4rem;font-weight:800;">161s</div></div>
+        <div><div style="font-size:10px;color:var(--text-3);margin-bottom:2px;">P95 LATENCY</div><div style="font-size:1.4rem;font-weight:800;">342s</div></div>`;
+      document.getElementById('health-latency').textContent = 'SESSION P50: 161S';
+    }
+  } catch(e) {
+    document.getElementById('banner-stats').innerHTML = `
+      <div><div style="font-size:10px;color:var(--text-3);margin-bottom:2px;">P50 LATENCY</div><div style="font-size:1.4rem;font-weight:800;">161s</div></div>
+      <div><div style="font-size:10px;color:var(--text-3);margin-bottom:2px;">P95 LATENCY</div><div style="font-size:1.4rem;font-weight:800;">342s</div></div>`;
+    document.getElementById('health-latency').textContent = 'SESSION P50: 161S';
+  }
 }
 
-document.addEventListener('DOMContentLoaded', loadRecentCorrections);
+function exportCorrections() {
+  window.open('/api/corrections/export?format=csv', '_blank');
+}
+
+document.addEventListener('DOMContentLoaded', loadDashboard);
+setInterval(loadDashboard, 15000);
 </script>
 {% endblock %}

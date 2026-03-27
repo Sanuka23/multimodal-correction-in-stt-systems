@@ -40,7 +40,7 @@ def detect_backend() -> str:
 def load_model(
     adapter_path: Optional[str] = None,
     model_path: Optional[str] = None,
-    base_model: str = "mlx-community/Qwen2.5-7B-Instruct-4bit",
+    base_model: str = "mlx-community/Qwen3.5-9B-MLX-4bit",
     backend: Optional[str] = None,
 ) -> Tuple:
     """Load model with LoRA adapters. Cached as singleton.

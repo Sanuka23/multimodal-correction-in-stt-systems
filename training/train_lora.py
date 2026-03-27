@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class TrainingConfig:
     """Training hyperparameters and paths."""
 
-    model_name: str = "mlx-community/Qwen2.5-7B-Instruct-4bit"
+    model_name: str = "mlx-community/Qwen3.5-9B-MLX-4bit"
     data_dir: Path = Path("./data/collected_data")
     train_file: str = "train.jsonl"
     valid_file: str = "valid.jsonl"
