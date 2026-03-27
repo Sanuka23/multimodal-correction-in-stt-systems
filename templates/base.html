@@ -1,66 +1,279 @@
 <!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}ASR Correction{% endblock %}</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = { darkMode: 'class' };
-    </script>
-    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
-    <style>
-        /* Theme transition */
-        html { transition: background-color 0.2s, color 0.2s; }
-        /* Scrollbar dark mode */
-        .dark ::-webkit-scrollbar { width: 8px; }
-        .dark ::-webkit-scrollbar-track { background: #1f2937; }
-        .dark ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
-    </style>
-    <script>
-        // Persist theme preference
-        (function() {
-            const saved = localStorage.getItem('theme');
-            if (saved === 'light') {
-                document.documentElement.classList.remove('dark');
-            } else {
-                document.documentElement.classList.add('dark');
-            }
-        })();
-        function toggleTheme() {
-            const html = document.documentElement;
-            html.classList.toggle('dark');
-            localStorage.setItem('theme', html.classList.contains('dark') ? 'dark' : 'light');
-            // Update plotly charts if any
-            if (window.updatePlotlyTheme) window.updatePlotlyTheme();
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Kinetic Console{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: { DEFAULT: '#06b6d4', dark: '#0891b2' },
+            surface: { 1: '#0d1117', 2: '#161b2a', 3: '#1e2537', 4: '#252d3d' },
+          },
+          borderRadius: { '2xl': '1rem', '3xl': '1.5rem' },
         }
-    </script>
+      }
+    };
+  </script>
+  <style>
+    :root {
+      --bg-base:    #0d1117;
+      --bg-card:    #161b2a;
+      --bg-card2:   #1e2537;
+      --bg-card3:   #252d3d;
+      --accent:     #06b6d4;
+      --accent-g:   #10b981;
+      --accent-y:   #f59e0b;
+      --accent-r:   #ef4444;
+      --text-1:     #f1f5f9;
+      --text-2:     #94a3b8;
+      --text-3:     #64748b;
+      --border:     #1e2537;
+    }
+    html { background: var(--bg-base); }
+    body { background: var(--bg-base); color: var(--text-1); font-family: 'Inter', system-ui, sans-serif; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg-base); }
+    ::-webkit-scrollbar-thumb { background: var(--bg-card3); border-radius: 9999px; }
+
+    /* Nav pill */
+    .nav-pill { display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;letter-spacing:.05em;padding:4px 10px;border-radius:9999px;border:1px solid; }
+    .nav-pill.green  { color:#10b981;border-color:#10b98133;background:#10b98110; }
+    .nav-pill.cyan   { color:#06b6d4;border-color:#06b6d433;background:#06b6d410; }
+    .nav-pill.yellow { color:#f59e0b;border-color:#f59e0b33;background:#f59e0b10; }
+    .nav-pill .dot   { width:6px;height:6px;border-radius:50%;background:currentColor; }
+
+    /* Sidebar nav link */
+    .nav-link { display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:10px;font-size:13px;font-weight:500;color:var(--text-2);transition:all .15s; }
+    .nav-link:hover { color:var(--text-1);background:var(--bg-card2); }
+    .nav-link.active { color:#06b6d4;background:#06b6d415;border-left:2px solid #06b6d4;padding-left:10px; }
+    .nav-link svg { width:16px;height:16px;flex-shrink:0; }
+
+    /* Card */
+    .card { background:var(--bg-card);border:1px solid var(--border);border-radius:1rem; }
+    .card2 { background:var(--bg-card2);border:1px solid var(--border);border-radius:.875rem; }
+
+    /* Stat card */
+    .stat-card { background:var(--bg-card);border:1px solid var(--border);border-radius:1rem;padding:1.25rem; }
+    .stat-card .label { font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--text-3);text-transform:uppercase;margin-bottom:.5rem; }
+    .stat-card .value { font-size:1.75rem;font-weight:800;color:var(--text-1);line-height:1; }
+    .stat-card .sub   { font-size:11px;color:var(--text-3);margin-top:.35rem; }
+
+    /* Badge */
+    .badge { display:inline-flex;align-items:center;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600; }
+    .badge.green  { background:#10b98120;color:#10b981; }
+    .badge.cyan   { background:#06b6d420;color:#06b6d4; }
+    .badge.yellow { background:#f59e0b20;color:#f59e0b; }
+    .badge.red    { background:#ef444420;color:#ef4444; }
+    .badge.gray   { background:#64748b20;color:#94a3b8; }
+    .badge.purple { background:#a855f720;color:#a855f7; }
+
+    /* Toggle */
+    .toggle { position:relative;width:40px;height:22px;flex-shrink:0; }
+    .toggle input { opacity:0;width:0;height:0; }
+    .toggle .slider { position:absolute;inset:0;background:#1e2537;border-radius:9999px;transition:.2s;cursor:pointer; }
+    .toggle .slider:before { content:'';position:absolute;width:16px;height:16px;left:3px;bottom:3px;background:#64748b;border-radius:50%;transition:.2s; }
+    .toggle input:checked + .slider { background:#06b6d420;border:1px solid #06b6d4; }
+    .toggle input:checked + .slider:before { background:#06b6d4;transform:translateX(18px); }
+
+    /* Step node */
+    .step-node { display:flex;flex-direction:column;align-items:center;gap:6px; }
+    .step-icon { width:52px;height:52px;border-radius:14px;display:flex;align-items:center;justify-content:center;border:2px solid; }
+    .step-icon.done    { background:#10b98120;border-color:#10b981;color:#10b981; }
+    .step-icon.running { background:#06b6d420;border-color:#06b6d4;color:#06b6d4; }
+    .step-icon.pending { background:#1e2537;border-color:#334155;color:#475569; }
+    .step-icon.error   { background:#ef444420;border-color:#ef4444;color:#ef4444; }
+    .step-icon.skipped { background:#1e2537;border-color:#334155;color:#334155; }
+    @keyframes pulse-glow { 0%,100%{box-shadow:0 0 0 0 rgba(6,182,212,.4)} 50%{box-shadow:0 0 0 8px rgba(6,182,212,0)} }
+    .step-icon.running { animation: pulse-glow 1.5s ease-in-out infinite; }
+    .step-connector { flex:1;height:2px;background:var(--border);border-radius:1px;margin-top:-26px; }
+    .step-connector.done { background:linear-gradient(90deg,#10b981,#06b6d4); }
+
+    /* Diff highlight */
+    .diff-error { text-decoration:line-through;color:#f87171;background:#ef444415;padding:1px 3px;border-radius:3px; }
+    .diff-correct { color:#34d399;background:#10b98115;padding:1px 4px;border-radius:3px;font-weight:600; }
+    .diff-hint { font-size:10px;color:#06b6d4;background:#06b6d415;padding:1px 5px;border-radius:3px;margin-left:3px; }
+
+    /* Slider */
+    input[type=range] { -webkit-appearance:none;height:4px;background:var(--bg-card3);border-radius:9999px;outline:none; }
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:#06b6d4;cursor:pointer;border:2px solid var(--bg-card); }
+
+    /* Btn */
+    .btn-primary { background:#06b6d4;color:#0d1117;font-weight:700;font-size:13px;padding:8px 18px;border-radius:9999px;border:none;cursor:pointer;transition:.15s; }
+    .btn-primary:hover { background:#0891b2; }
+    .btn-ghost { background:var(--bg-card2);color:var(--text-2);font-weight:600;font-size:12px;padding:7px 14px;border-radius:9999px;border:1px solid var(--border);cursor:pointer;transition:.15s; }
+    .btn-ghost:hover { color:var(--text-1);border-color:#334155; }
+    .btn-danger { background:#ef444420;color:#ef4444;font-weight:700;font-size:13px;padding:8px 18px;border-radius:9999px;border:1px solid #ef444440;cursor:pointer; }
+    .btn-danger:hover { background:#ef444430; }
+
+    /* Input */
+    .input { background:var(--bg-card2);border:1px solid var(--border);border-radius:.75rem;color:var(--text-1);padding:8px 12px;font-size:13px;outline:none;width:100%; }
+    .input:focus { border-color:#06b6d4;box-shadow:0 0 0 3px #06b6d420; }
+    select.input { cursor:pointer; }
+
+    /* Section heading */
+    .section-title { font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--text-3);text-transform:uppercase;margin-bottom:.75rem; }
+
+    /* Live dot */
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .live-dot { width:7px;height:7px;border-radius:50%;background:#10b981;animation:blink 1.5s ease-in-out infinite; }
+
+    /* Scrollable log */
+    .log-console { background:#080c14;border:1px solid var(--border);border-radius:.75rem;padding:.75rem;font-size:11px;font-family:'JetBrains Mono',monospace;height:120px;overflow-y:auto;color:#64748b; }
+    .log-console .info  { color:#94a3b8; }
+    .log-console .run   { color:#06b6d4; }
+    .log-console .warn  { color:#f59e0b; }
+    .log-console .err   { color:#ef4444; }
+  </style>
 </head>
-<body class="bg-gray-50 dark:bg-gray-900 min-h-screen text-gray-900 dark:text-gray-100 transition-colors">
-    <nav class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-3">
-        <div class="flex items-center justify-between max-w-7xl mx-auto">
-            <a href="/dashboard" class="text-lg font-semibold text-gray-900 dark:text-white">ASR Correction</a>
-            <div class="flex items-center gap-4 text-sm">
-                <a href="/dashboard" class="text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white">Dashboard</a>
-                <a href="/dashboard/compare" class="text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white">Compare</a>
-                <a href="/dashboard/jobs" class="text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white">Jobs</a>
-                <a href="/dashboard/training" class="text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white">Training</a>
-                <a href="/docs" class="text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white">API Docs</a>
-                <button onclick="toggleTheme()" class="ml-2 p-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors" title="Toggle theme">
-                    <!-- Sun icon (shown in dark mode) -->
-                    <svg class="w-4 h-4 hidden dark:block text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"/>
-                    </svg>
-                    <!-- Moon icon (shown in light mode) -->
-                    <svg class="w-4 h-4 block dark:hidden text-gray-600" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/>
-                    </svg>
-                </button>
-            </div>
-        </div>
+<body>
+
+<!-- LAYOUT -->
+<div class="flex h-screen overflow-hidden">
+
+  <!-- SIDEBAR -->
+  <aside style="width:220px;min-width:220px;background:var(--bg-card);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:20px 12px;">
+    <!-- Brand -->
+    <div style="padding:0 4px 20px;border-bottom:1px solid var(--border);margin-bottom:16px;">
+      <div style="font-size:16px;font-weight:800;color:#06b6d4;letter-spacing:-.01em;">Kinetic Console</div>
+      <div style="font-size:10px;color:var(--text-3);font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin-top:2px;">AI Correction Engine</div>
+    </div>
+
+    <!-- Nav items -->
+    <nav style="flex:1;display:flex;flex-direction:column;gap:2px;">
+      <a href="/dashboard" class="nav-link {% if active_page=='dashboard' %}active{% endif %}">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M2 10a8 8 0 018-8v8h8a8 8 0 11-16 0z"/><path d="M12 2.252A8.014 8.014 0 0117.748 8H12V2.252z"/></svg>
+        Dashboard
+      </a>
+      <a href="/dashboard/jobs" class="nav-link {% if active_page=='jobs' %}active{% endif %}">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/><path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd"/></svg>
+        Jobs
+      </a>
+      <a href="/dashboard/compare" class="nav-link {% if active_page=='compare' %}active{% endif %}">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M8 5a1 1 0 000 2h5.586l-1.293 1.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L13.586 5H8zM12 15a1 1 0 100-2H6.414l1.293-1.293a1 1 0 10-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L6.414 15H12z"/></svg>
+        Compare
+      </a>
+      <a href="/dashboard/training" class="nav-link {% if active_page=='training' %}active{% endif %}">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z"/></svg>
+        Training
+      </a>
+      <a href="/dashboard/pipeline-control" class="nav-link {% if active_page=='pipeline_control' %}active{% endif %}">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
+        Pipeline Control
+      </a>
+      <a href="/dashboard/eval" class="nav-link {% if active_page=='eval' %}active{% endif %}">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 3a1 1 0 000 2v8a2 2 0 002 2h2.586l-1.293 1.293a1 1 0 101.414 1.414L10 15.414l2.293 2.293a1 1 0 001.414-1.414L12.414 15H15a2 2 0 002-2V5a1 1 0 100-2H3zm11 4a1 1 0 10-2 0v4a1 1 0 102 0V7zm-3 1a1 1 0 10-2 0v3a1 1 0 102 0V8zM8 9a1 1 0 00-2 0v2a1 1 0 102 0V9z" clip-rule="evenodd"/></svg>
+        Eval
+      </a>
+      <a href="/docs" class="nav-link">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clip-rule="evenodd"/></svg>
+        API Docs
+      </a>
     </nav>
-    <main class="max-w-7xl mx-auto px-6 py-8">
-        {% block content %}{% endblock %}
+
+    <!-- Deploy button -->
+    <div style="padding-top:16px;border-top:1px solid var(--border);">
+      <button class="btn-primary" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;" onclick="window.location='/dashboard/pipeline-control'">
+        <svg style="width:14px;height:14px;" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd"/></svg>
+        Deploy Model
+      </button>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:12px;">
+        <svg style="width:12px;height:12px;color:#64748b;flex-shrink:0;" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
+        <a href="/settings" style="font-size:12px;color:var(--text-3);">Settings</a>
+        <button onclick="toggleTheme()" style="margin-left:auto;background:none;border:none;cursor:pointer;color:var(--text-3);">
+          <svg class="hidden dark:block" style="width:14px;height:14px;color:#f59e0b;" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"/></svg>
+          <svg class="block dark:hidden" style="width:14px;height:14px;" viewBox="0 0 20 20" fill="currentColor"><path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/></svg>
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN AREA -->
+  <div style="flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden;">
+
+    <!-- TOP NAV -->
+    <header style="background:var(--bg-card);border-bottom:1px solid var(--border);padding:10px 20px;display:flex;align-items:center;gap:12px;flex-shrink:0;">
+      <div style="flex:1;">
+        <input class="input" style="max-width:280px;padding:7px 12px 7px 34px;position:relative;" placeholder="Search corrections..." />
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;" id="nav-status-pills">
+        <span class="nav-pill green"><span class="dot"></span>MODEL: <span id="nav-model-status">ACTIVE</span></span>
+        <span class="nav-pill cyan" id="nav-ocr-pill"><span class="dot"></span>OCR: <span id="nav-ocr-status">HEALTHY</span></span>
+        <span class="nav-pill yellow" id="nav-avsr-pill"><span class="dot"></span>AVSR: <span id="nav-avsr-status">MEDIAPIPE</span></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <a href="/dashboard/eval"><button class="btn-ghost">RUN EVAL</button></a>
+        <button class="btn-primary" onclick="promoteV2()" id="promote-v2-btn" style="display:none;">PROMOTE V2</button>
+        <div style="width:32px;height:32px;border-radius:50%;background:var(--bg-card3);border:2px solid var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer;" title="Notifications">
+          <svg style="width:14px;height:14px;color:var(--text-2);" viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z"/></svg>
+        </div>
+      </div>
+    </header>
+
+    <!-- PAGE CONTENT -->
+    <main style="flex:1;overflow-y:auto;padding:24px;">
+      {% block content %}{% endblock %}
     </main>
+
+  </div>
+</div>
+
+<script>
+  // Theme
+  (function() {
+    const s = localStorage.getItem('theme');
+    if (s === 'light') document.documentElement.classList.remove('dark');
+    else document.documentElement.classList.add('dark');
+  })();
+  function toggleTheme() {
+    document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
+  }
+
+  // Check if v2 adapters exist
+  async function checkV2Status() {
+    try {
+      const r = await fetch('/api/training/adapters');
+      const d = await r.json();
+      if (d.adapters && d.adapters.some(a => a.id && a.id.includes('v2') && a.status !== 'production')) {
+        document.getElementById('promote-v2-btn').style.display = 'flex';
+      }
+    } catch(e) {}
+  }
+  checkV2Status();
+
+  async function promoteV2() {
+    if (!confirm('Promote v2 adapters to production? This will replace the current v1 model.')) return;
+    const r = await fetch('/api/training/promote-v2', {method:'POST'});
+    const d = await r.json();
+    if (d.status === 'ok') { alert('v2 promoted!'); location.reload(); }
+    else alert('Error: ' + JSON.stringify(d));
+  }
+
+  // Poll system status
+  async function pollStatus() {
+    try {
+      const r = await fetch('/api/health');
+      const d = await r.json();
+      if (d.ocr_status) document.getElementById('nav-ocr-status').textContent = d.ocr_status.toUpperCase();
+      if (d.avsr_mode)  document.getElementById('nav-avsr-status').textContent = d.avsr_mode.toUpperCase();
+      if (d.model_loaded === false) {
+        const p = document.querySelector('.nav-pill.green');
+        if (p) p.className = 'nav-pill yellow';
+        document.getElementById('nav-model-status').textContent = 'LOADING';
+      }
+    } catch(e) {}
+  }
+  pollStatus();
+  setInterval(pollStatus, 30000);
+</script>
+{% block scripts %}{% endblock %}
 </body>
 </html>

@@ -18,7 +18,7 @@ class CorrectionConfig:
     # Model
     adapter_path: Optional[str] = None
     model_path: Optional[str] = None
-    base_model: str = "mlx-community/Qwen2.5-7B-Instruct-4bit"
+    base_model: str = "mlx-community/Qwen3.5-9B-MLX-4bit"
     confidence_threshold: float = 0.7
     max_tokens: int = 512
 
@@ -65,25 +65,23 @@ class CorrectionConfig:
 
     def __post_init__(self):
         """Resolve paths relative to module directory and apply env overrides."""
-        # Adapter path
+        # Adapter path — prompt-only mode (no adapters)
+        # LoRA fine-tune experiments:
+        #   v1 (1000 iters): too aggressive (Kimi→Mimi, Sheldon→Tim)
+        #   v2 (v1+100-200 hard neg iters): too passive (0 corrections)
+        # Base Qwen3.5-9B + validation step gives best balance
         if self.adapter_path is None:
             env_val = os.environ.get("ASR_CORRECTION_ADAPTER_PATH")
             if env_val:
                 self.adapter_path = env_val
-            else:
-                default = str(_MODULE_DIR / "adapters")
-                if Path(default).exists():
-                    self.adapter_path = default
 
-        # Model path (local weights)
+        # Model path — disabled, download fresh from HuggingFace
+        # Old Qwen2.5 local weights are incompatible with Qwen3.5
         if self.model_path is None:
             env_val = os.environ.get("ASR_CORRECTION_MODEL_PATH")
             if env_val:
                 self.model_path = env_val
-            else:
-                default = str(_MODULE_DIR / "model_weights")
-                if Path(default).exists():
-                    self.model_path = default
+            # else: don't auto-load old local weights
 
         # Domain vocab
         if self.domain_vocab_path is None:

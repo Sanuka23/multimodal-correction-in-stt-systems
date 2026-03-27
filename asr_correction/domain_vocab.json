@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "description": "Domain vocabulary for ASR correction \u2014 deduplicated from training data",
+  "description": "Domain vocabulary for ASR correction — deduplicated from training data",
   "terms": [
     {
       "term": "Adobe Premiere",
