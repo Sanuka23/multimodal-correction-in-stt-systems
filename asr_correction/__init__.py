@@ -20,15 +20,13 @@ Usage:
 import logging
 import time
 
-from .batch_corrector import correct_transcript_batch
 from .config import CorrectionConfig
-from .corrector import correct_candidates
 from .data_collector import collect_correction_data
 from .segment_selector import select_segments
 from .types import CorrectionReport
 from .vocabulary import load_domain_vocab, merge_vocabularies
 
-__version__ = "3.0.0"
+__version__ = "4.0.0"  # Whisper reconciliation pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -192,48 +190,27 @@ def correct_transcript(
     else:
         logger.info("Step 3: No video URL — skipping OCR")
 
-    # Step 3.5: Pre-collect AVSR hints for flagged segments (before batch correction)
-    lip_hints = {}  # (ts_start, ts_end) → hint_string
-    avsr_needs = [a for a in flagged if a.needs_avsr]
-    if avsr_provider and video_url and avsr_needs and not config.dry_run:
-        avsr_pre = avsr_needs[:config.avsr_max_segments]
-        logger.info("Step 3.5: Pre-collecting AVSR hints for %d segments", len(avsr_pre))
-        for analysis in avsr_pre:
-            try:
-                hint = avsr_provider.analyze_segment(
-                    video_url, analysis.start, analysis.end
-                )
-                if hint and hint.face_detected:
-                    lip_hints[(analysis.start, analysis.end)] = hint.to_prompt_hint()
-            except Exception as e:
-                logger.warning("AVSR pre-collection failed for [%.1f-%.1f]: %s",
-                             analysis.start, analysis.end, e)
-        if lip_hints:
-            logger.info("Step 3.5: Collected %d AVSR hints", len(lip_hints))
-    else:
-        logger.info("Step 3.5: AVSR pre-collection skipped")
-
-    # Step 4: Batch correction — send whole transcript chunks to model
-    logger.info("Step 4: Batch correction (whole transcript, not word-by-word)...")
-    enhanced, report = correct_transcript_batch(
-        transcript, file_id, vocab_terms,
-        ocr_provider=targeted_ocr_provider,
-        config=config,
-        lip_hints=lip_hints,
-    )
-    logger.info("Step 4 complete: %d corrections applied in %.0fms",
-                report.corrections_applied, report.processing_time_ms)
-
-    # Step 4.5: Whisper Pass 2 — re-transcribe flagged segments with vocab hints
-    if config.whisper_pass2_enabled and video_url and report.results and not config.dry_run:
+    # Step 4: Whisper Pass 2 — re-transcribe flagged segments with vocab hints
+    whisper_segments = {}
+    if video_url and flagged and not config.dry_run:
         try:
-            from .whisper_pass2 import run_whisper_pass2, build_initial_prompt
+            from .whisper_pass2 import retranscribe_flagged_segments, build_initial_prompt
 
             # Build initial prompt from all vocab sources
             topic_suggested = topic_info.get("suggested_vocab", []) if topic_info else []
             custom_terms = [t["term"] for t in vocab_terms]
-            # Extract speaker names from OCR hints
-            ocr_names = [h for h in quick_ocr_hints if len(h.split()) <= 3 and h[0].isupper()][:10]
+            # Extract speaker names from OCR (look for "Firstname Lastname" patterns)
+            ocr_names = []
+            for h in quick_ocr_hints:
+                words = h.split()
+                if 2 <= len(words) <= 3 and all(w[0].isupper() for w in words if w):
+                    # Filter out UI text like "Stop presenting", "Add people"
+                    if not any(skip in h.lower() for skip in [
+                        "stop", "add", "search", "meeting", "presenting", "contributors",
+                        "view", "top", "you are",
+                    ]):
+                        ocr_names.append(h)
+            ocr_names = ocr_names[:10]
             web_terms = [v.get("term", "") for v in web_vocab] if web_vocab else []
 
             initial_prompt = build_initial_prompt(
@@ -242,96 +219,79 @@ def correct_transcript(
                 ocr_names=ocr_names,
                 web_vocab=web_terms,
             )
-            logger.info("Step 4.5: Whisper initial_prompt (%d chars): %s", len(initial_prompt), initial_prompt[:200])
 
-            enhanced, whisper_results = run_whisper_pass2(
+            # Collect flagged segment timestamps
+            flagged_ts = [(a.start, a.end) for a in flagged if a.start < a.end]
+
+            whisper_segments = retranscribe_flagged_segments(
                 video_url=video_url,
-                original_transcript=transcript,
-                enhanced_transcript=enhanced,
-                report=report,
+                flagged_segments=flagged_ts,
                 initial_prompt=initial_prompt,
                 config=config,
             )
-
-            # Update report with Whisper info
-            agreements = sum(1 for r in whisper_results if r.agreement == "agree")
-            disagreements = sum(1 for r in whisper_results if r.agreement == "disagree")
-            unclear = sum(1 for r in whisper_results if r.agreement == "unclear")
-            report.whisper_pass2_info = {
-                "segments_retranscribed": len(set((r.segment_start, r.segment_end) for r in whisper_results)),
-                "corrections_checked": len(whisper_results),
-                "agreements": agreements,
-                "disagreements_reverted": disagreements,
-                "unclear_kept": unclear,
-            }
         except ImportError:
-            logger.warning("Step 4.5: faster-whisper not installed — skipping Whisper Pass 2")
+            logger.warning("Step 4: faster-whisper not installed — skipping")
         except Exception as e:
-            logger.warning("Step 4.5: Whisper Pass 2 failed — %s", e)
+            logger.warning("Step 4: Whisper Pass 2 failed — %s", e)
+    elif not video_url:
+        logger.info("Step 4: No video URL — skipping Whisper Pass 2")
     else:
-        if not config.whisper_pass2_enabled:
-            logger.info("Step 4.5: Whisper Pass 2 disabled")
-        elif not video_url:
-            logger.info("Step 4.5: No video URL — skipping Whisper Pass 2")
-        else:
-            logger.info("Step 4.5: No corrections to verify — skipping Whisper Pass 2")
+        logger.info("Step 4: No flagged segments — skipping Whisper Pass 2")
 
-    # Step 5: AVSR pass on flagged segments
-    avsr_needs = [a for a in flagged if a.needs_avsr]
-    if avsr_provider and video_url and avsr_needs and not config.dry_run:
-        from .corrector import _fetch_ocr_hints
-        from .model import build_prompt, run_inference
+    # Step 5: LLM Reconciliation — compare original vs Whisper, pick best words
+    enhanced = dict(transcript)
+    all_changes = []
+    if whisper_segments and not config.dry_run:
+        try:
+            from .reconciler import reconcile_segments
 
-        avsr_needs = avsr_needs[:config.avsr_max_segments]
-        logger.info("Step 5: AVSR on %d segments (mode=%s)", len(avsr_needs), config.avsr_mode)
-
-        avsr_applied = 0
-        for i, analysis in enumerate(avsr_needs):
-            for candidate in analysis.candidates:
-                try:
-                    hint = avsr_provider.analyze_segment(
-                        video_url, candidate.timestamp_start, candidate.timestamp_end
-                    )
-                    if hint is None:
-                        continue
-
-                    lip_hint_str = hint.to_prompt_hint()
-                    ocr_hints = _fetch_ocr_hints(candidate, file_id, targeted_ocr_provider, config)
-
-                    prompt = build_prompt(
-                        candidate.context, [candidate.term], candidate.category,
-                        ocr_hints, lip_hint=lip_hint_str,
-                    )
-                    new_result = run_inference(
-                        prompt, config.system_prompt, model, tokenizer, config.max_tokens
-                    )
-
-                    new_confidence = new_result.get("confidence", 0.0)
-                    new_changes = new_result.get("changes", [])
-                    if new_confidence >= config.confidence_threshold and new_changes:
-                        import re
-                        pattern = re.compile(
-                            r'\b' + re.escape(candidate.error_found) + r'\b',
-                            re.IGNORECASE,
-                        )
-                        text = enhanced.get("text", "")
-                        new_text = pattern.sub(candidate.term, text, count=1)
-                        if new_text != text:
-                            enhanced["text"] = new_text
-                            for seg in enhanced.get("segments", []):
-                                seg_new = pattern.sub(candidate.term, seg.get("text", ""), count=1)
-                                if seg_new != seg.get("text", ""):
-                                    seg["text"] = seg_new
-                                    break
-                            avsr_applied += 1
-                except Exception as e:
-                    logger.warning("AVSR failed for '%s': %s", candidate.term, e)
-
-        logger.info("Step 5 complete: AVSR applied %d corrections", avsr_applied)
-        report.corrections_applied += avsr_applied
+            term_names = [t["term"] for t in vocab_terms]
+            enhanced, all_changes = reconcile_segments(
+                original_transcript=transcript,
+                whisper_segments=whisper_segments,
+                vocab_terms=term_names,
+                ocr_hints=quick_ocr_hints,
+                model=model,
+                tokenizer=tokenizer,
+                config=config,
+            )
+        except Exception as e:
+            logger.warning("Step 5: Reconciliation failed — %s", e)
+            enhanced = dict(transcript)
     else:
-        logger.info("Step 5: AVSR skipped (provider=%s, video=%s, segments=%d)",
-                    bool(avsr_provider), bool(video_url), len(avsr_needs) if avsr_needs else 0)
+        logger.info("Step 5: No Whisper segments to reconcile — returning original")
+
+    # Build report
+    from .types import CorrectionResult, CorrectionCandidate
+    results = []
+    for change_str in all_changes:
+        if "→" in str(change_str):
+            parts = str(change_str).split("→")
+            if len(parts) == 2:
+                old_w = parts[0].strip()
+                new_w = parts[1].strip()
+                results.append(CorrectionResult(
+                    candidate=CorrectionCandidate(
+                        term=new_w, category="reconciled",
+                        known_errors=[old_w], error_found=old_w,
+                        char_position=0, timestamp_start=0, timestamp_end=0,
+                        context=change_str,
+                    ),
+                    corrected_text=new_w,
+                    changes=[change_str],
+                    confidence=0.9,
+                    need_lip=False,
+                    ocr_hints_used=[],
+                    applied=True,
+                ))
+
+    report = CorrectionReport(
+        file_id=file_id,
+        corrections_attempted=len(whisper_segments),
+        corrections_applied=len(all_changes),
+        results=results,
+        processing_time_ms=0,
+    )
 
     # Step 6: Collect data for future training
     if config.collect_data and report.results:
@@ -340,19 +300,19 @@ def correct_transcript(
             report.results, config.system_prompt, config.data_output_dir
         )
 
-    # Add selector metadata to report
+    # Add metadata to report
     report.selector_info = {
         "total_segments": len(analyses),
         "flagged_segments": len(flagged),
-        "needs_ocr": len(quick_ocr_hints),
-        "needs_avsr": len(avsr_needs) if avsr_needs else 0,
+        "ocr_hints": len(quick_ocr_hints),
+        "whisper_segments": len(whisper_segments),
         "candidates_found": len(candidates),
     }
     report.topic_info = topic_info
 
     total_ms = (time.time() - pipeline_start) * 1000
     report.processing_time_ms = total_ms
-    logger.info("Pipeline complete in %.0fms (selector → targeted OCR → correction)", total_ms)
+    logger.info("Pipeline complete in %.0fms", total_ms)
 
     return enhanced, report
 

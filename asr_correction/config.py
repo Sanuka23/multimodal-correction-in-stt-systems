@@ -55,8 +55,7 @@ class CorrectionConfig:
     # Quick OCR (Step 3 — fast whole-video scan)
     quick_ocr_num_frames: int = 10
 
-    # Whisper Pass 2 (Step 4.5 — re-transcribe flagged segments with vocab prompt)
-    whisper_pass2_enabled: bool = True
+    # Whisper Pass 2 (Step 4 — re-transcribe flagged segments with vocab prompt)
     whisper_model_size: str = "small"  # "tiny", "base", "small", "medium"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
