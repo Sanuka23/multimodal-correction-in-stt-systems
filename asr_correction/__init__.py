@@ -128,35 +128,69 @@ def correct_transcript(
     # Step 2.6: Web vocab enrichment (search web using description, extract vocab with Qwen)
     web_vocab = _enrich_vocab_from_web(topic_info, model, tokenizer)
 
-    # Step 3: Targeted OCR extraction (only for flagged segments)
-    ocr_needs = [a for a in flagged if a.needs_ocr]
-    targeted_ocr_provider = ocr_provider  # Use existing provider if available
+    # Step 3: Quick OCR — grab ~10 evenly spaced frames, OCR them for screen text
+    targeted_ocr_provider = ocr_provider
+    quick_ocr_hints = []
 
-    if not ocr_provider and ocr_needs and video_url:
-        # No cached OCR — do targeted extraction for flagged segments only
+    if not ocr_provider and video_url and not config.dry_run:
         try:
-            from .ocr_extractor import extract_ocr_for_segments
+            from .video_frames import extract_frames_periodic, get_video_duration
+            from .ocr_extractor import _ocr_single_frame
 
-            time_ranges = [(a.start, a.end) for a in ocr_needs]
-            logger.info("Step 3: Targeted OCR for %d segments (vs full video)", len(ocr_needs))
+            t3 = time.time()
+            num_frames = config.quick_ocr_num_frames
+            duration = get_video_duration(video_url)
+            if duration and duration > 0:
+                interval = max(duration / num_frames, 5.0)
+                logger.info("Step 3: Quick OCR — extracting %d frames (every %.0fs from %.0fs video)",
+                            num_frames, interval, duration)
 
-            ocr_hints_by_ts = extract_ocr_for_segments(
-                video_url, time_ranges,
-                padding_s=config.ocr_window_seconds,
-                min_confidence=getattr(config, 'ocr_min_confidence', 0.5),
-            )
+                frames = extract_frames_periodic(
+                    video_url, interval_s=interval, max_frames=num_frames,
+                )
 
-            if ocr_hints_by_ts:
-                targeted_ocr_provider = _create_targeted_ocr_provider(ocr_hints_by_ts)
-                logger.info("Step 3: Targeted OCR found text at %d timestamps", len(ocr_hints_by_ts))
+                if frames:
+                    seen = set()
+                    for frame in frames:
+                        result = _ocr_single_frame(frame)
+                        if result:
+                            for txt_entry in result.get("texts", []):
+                                line = txt_entry.get("text", "").strip()
+                                if not line or line in seen or len(line) <= 3:
+                                    continue
+                                # Filter noise
+                                if any(skip in line for skip in [
+                                    "http", "://", "&quot;", "&amp;", "{", "}", "[", "]",
+                                    "index", "logprobs", "finish_reason", "content\"",
+                                    "In-call messages", "access this chat",
+                                ]):
+                                    continue
+                                if len(line) > 80:
+                                    continue
+                                seen.add(line)
+                                quick_ocr_hints.append(line)
+
+                    t3_ms = (time.time() - t3) * 1000
+                    logger.info("Step 3: Quick OCR found %d text snippets in %.0fms", len(quick_ocr_hints), t3_ms)
+                    for i, txt in enumerate(quick_ocr_hints[:5]):
+                        logger.info("  OCR[%d]: %s", i, txt[:100])
+                    if len(quick_ocr_hints) > 5:
+                        logger.info("  ... and %d more", len(quick_ocr_hints) - 5)
+
+                    # Create provider that returns all hints for any timestamp
+                    if quick_ocr_hints:
+                        all_xml = "\n".join(f"<frame><text>{t}</text></frame>" for t in quick_ocr_hints)
+                        targeted_ocr_provider = lambda fid, start, end: all_xml
+                else:
+                    logger.info("Step 3: No frames extracted from video")
             else:
-                logger.info("Step 3: Targeted OCR found no text")
+                logger.info("Step 3: Could not determine video duration")
         except (ImportError, Exception) as e:
-            logger.warning("Step 3: Targeted OCR failed — %s", e)
+            logger.warning("Step 3: Quick OCR failed — %s", e)
     elif ocr_provider:
         logger.info("Step 3: Using pre-cached OCR provider")
     else:
-        logger.info("Step 3: No video URL or OCR provider — skipping OCR")
+        logger.info("Step 3: No video URL — skipping OCR")
 
     # Step 3.5: Pre-collect AVSR hints for flagged segments (before batch correction)
     lip_hints = {}  # (ts_start, ts_end) → hint_string
@@ -189,6 +223,58 @@ def correct_transcript(
     )
     logger.info("Step 4 complete: %d corrections applied in %.0fms",
                 report.corrections_applied, report.processing_time_ms)
+
+    # Step 4.5: Whisper Pass 2 — re-transcribe flagged segments with vocab hints
+    if config.whisper_pass2_enabled and video_url and report.results and not config.dry_run:
+        try:
+            from .whisper_pass2 import run_whisper_pass2, build_initial_prompt
+
+            # Build initial prompt from all vocab sources
+            topic_suggested = topic_info.get("suggested_vocab", []) if topic_info else []
+            custom_terms = [t["term"] for t in vocab_terms]
+            # Extract speaker names from OCR hints
+            ocr_names = [h for h in quick_ocr_hints if len(h.split()) <= 3 and h[0].isupper()][:10]
+            web_terms = [v.get("term", "") for v in web_vocab] if web_vocab else []
+
+            initial_prompt = build_initial_prompt(
+                topic_vocab=topic_suggested,
+                custom_vocab=custom_terms,
+                ocr_names=ocr_names,
+                web_vocab=web_terms,
+            )
+            logger.info("Step 4.5: Whisper initial_prompt (%d chars): %s", len(initial_prompt), initial_prompt[:200])
+
+            enhanced, whisper_results = run_whisper_pass2(
+                video_url=video_url,
+                original_transcript=transcript,
+                enhanced_transcript=enhanced,
+                report=report,
+                initial_prompt=initial_prompt,
+                config=config,
+            )
+
+            # Update report with Whisper info
+            agreements = sum(1 for r in whisper_results if r.agreement == "agree")
+            disagreements = sum(1 for r in whisper_results if r.agreement == "disagree")
+            unclear = sum(1 for r in whisper_results if r.agreement == "unclear")
+            report.whisper_pass2_info = {
+                "segments_retranscribed": len(set((r.segment_start, r.segment_end) for r in whisper_results)),
+                "corrections_checked": len(whisper_results),
+                "agreements": agreements,
+                "disagreements_reverted": disagreements,
+                "unclear_kept": unclear,
+            }
+        except ImportError:
+            logger.warning("Step 4.5: faster-whisper not installed — skipping Whisper Pass 2")
+        except Exception as e:
+            logger.warning("Step 4.5: Whisper Pass 2 failed — %s", e)
+    else:
+        if not config.whisper_pass2_enabled:
+            logger.info("Step 4.5: Whisper Pass 2 disabled")
+        elif not video_url:
+            logger.info("Step 4.5: No video URL — skipping Whisper Pass 2")
+        else:
+            logger.info("Step 4.5: No corrections to verify — skipping Whisper Pass 2")
 
     # Step 5: AVSR pass on flagged segments
     avsr_needs = [a for a in flagged if a.needs_avsr]
@@ -258,7 +344,7 @@ def correct_transcript(
     report.selector_info = {
         "total_segments": len(analyses),
         "flagged_segments": len(flagged),
-        "needs_ocr": len(ocr_needs),
+        "needs_ocr": len(quick_ocr_hints),
         "needs_avsr": len(avsr_needs) if avsr_needs else 0,
         "candidates_found": len(candidates),
     }

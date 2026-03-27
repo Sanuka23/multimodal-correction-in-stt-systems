@@ -142,11 +142,14 @@ async def asr_correct(
     })
 
     try:
-        # OCR/AVSR disabled — just logging which frames LLM would request
+        # OCR + Whisper Pass 2 use video_url — pass it through to pipeline
         ocr_provider = None
-        video_url = None
-        logger.info("OCR: Disabled — will log LLM frame requests only")
-        await update_job_step(job_id, "ocr_extraction", "skipped", details={"reason": "disabled"})
+        video_url = request.video_url if request.video_url else None
+        if video_url:
+            logger.info("Video URL: available (Quick OCR + Whisper Pass 2 will run)")
+        else:
+            logger.info("Video URL: not provided (OCR + Whisper Pass 2 skipped)")
+        await update_job_step(job_id, "ocr_extraction", "pending" if video_url else "skipped")
 
         # AVSR disabled for now
         avsr_provider = None
