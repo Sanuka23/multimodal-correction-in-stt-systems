@@ -142,9 +142,10 @@ async def asr_correct(
     })
 
     try:
-        # OCR disabled for now
+        # OCR/AVSR disabled — just logging which frames LLM would request
         ocr_provider = None
-        logger.info("OCR: Disabled — skipping OCR extraction")
+        video_url = None
+        logger.info("OCR: Disabled — will log LLM frame requests only")
         await update_job_step(job_id, "ocr_extraction", "skipped", details={"reason": "disabled"})
 
         # AVSR disabled for now
@@ -182,9 +183,9 @@ async def asr_correct(
                 transcript=request.transcript,
                 file_id=request.file_id,
                 custom_vocabulary=vocab,
-                ocr_provider=None,
+                ocr_provider=ocr_provider,
                 avsr_provider=None,
-                video_url=None,  # OCR/AVSR disabled for now
+                video_url=video_url,
                 config=config,
             )
 

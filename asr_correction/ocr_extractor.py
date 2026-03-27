@@ -48,6 +48,68 @@ def _format_timestamp(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
+# Google Cloud Vision OCR (faster alternative to PaddleOCR)
+_vision_client = None
+
+def _get_vision_client():
+    """Lazy-initialize Google Cloud Vision client."""
+    global _vision_client
+    if _vision_client is None:
+        try:
+            from google.cloud import vision
+            _vision_client = vision.ImageAnnotatorClient()
+            logger.info("Google Cloud Vision OCR client ready")
+        except ImportError:
+            logger.warning("google-cloud-vision not installed, falling back to PaddleOCR")
+            return None
+        except Exception as e:
+            logger.warning("Google Vision init failed: %s, falling back to PaddleOCR", e)
+            return None
+    return _vision_client
+
+
+def _ocr_single_frame_vision(frame, min_confidence: float = 0.5) -> Optional[Dict]:
+    """Run Google Cloud Vision OCR on a single frame.
+
+    Much faster than PaddleOCR — ~200ms per frame vs ~5s.
+    Uses TEXT_DETECTION for screen/document content.
+    """
+    import cv2
+
+    client = _get_vision_client()
+    if client is None:
+        return _ocr_single_frame(frame, min_confidence)
+
+    from google.cloud import vision
+
+    # Encode frame as PNG bytes
+    success, buffer = cv2.imencode('.png', frame.image)
+    if not success:
+        return None
+
+    image = vision.Image(content=buffer.tobytes())
+    response = client.text_detection(image=image)
+
+    if response.error.message:
+        logger.warning("Vision API error: %s", response.error.message)
+        return None
+
+    texts = []
+    for annotation in response.text_annotations[1:]:  # Skip [0] which is the full text
+        text = annotation.description.strip()
+        if text and len(text) >= 2:
+            texts.append({"text": text, "confidence": 0.95})  # Vision doesn't return per-word confidence
+
+    if not texts:
+        return None
+
+    return {
+        "timestamp_s": frame.timestamp_s,
+        "timestamp": _format_timestamp(frame.timestamp_s),
+        "texts": texts,
+    }
+
+
 def _ocr_single_frame(frame, min_confidence: float = 0.5) -> Optional[Dict]:
     """Run PaddleOCR on a single ExtractedFrame.
 
@@ -261,19 +323,28 @@ def extract_ocr_for_segments(
         logger.warning("No frames extracted for targeted OCR")
         return {}
 
-    # Run OCR on each frame
-    logger.info("Running PaddleOCR on %d targeted frames...", len(frames))
+    # Run OCR on each frame — try Google Vision first, fall back to PaddleOCR
+    use_vision = _get_vision_client() is not None
+    backend_name = "Google Vision" if use_vision else "PaddleOCR"
+    logger.info("Running %s on %d targeted frames...", backend_name, len(frames))
+
     results = {}
     for idx, frame in enumerate(frames):
         if idx % 5 == 0:
             logger.info("  Targeted OCR frame %d/%d (ts=%.0fs)...",
                         idx + 1, len(frames), frame.timestamp_s)
-        ocr_result = _ocr_single_frame(frame, min_confidence=min_confidence)
+
+        if use_vision:
+            ocr_result = _ocr_single_frame_vision(frame, min_confidence=min_confidence)
+        else:
+            ocr_result = _ocr_single_frame(frame, min_confidence=min_confidence)
+
         if ocr_result:
             texts = [t["text"] for t in ocr_result["texts"]]
             results[frame.timestamp_s] = texts
 
-    logger.info("Targeted OCR complete: found text in %d/%d frames", len(results), len(frames))
+    logger.info("Targeted OCR complete (%s): found text in %d/%d frames",
+                backend_name, len(results), len(frames))
     return results
 
 

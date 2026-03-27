@@ -59,7 +59,8 @@ def normalize_text(text: str) -> str:
 
 
 def run_correction(transcript: dict, video_path: str = None,
-                   use_avsr: bool = True, dry_run: bool = False) -> tuple:
+                   use_avsr: bool = True, dry_run: bool = False,
+                   skip_ocr: bool = False) -> tuple:
     """Run the full correction pipeline on one transcript."""
     from asr_correction import correct_transcript
     from asr_correction.avsr import get_avsr_provider
@@ -68,13 +69,16 @@ def run_correction(transcript: dict, video_path: str = None,
     avsr_mode = config.avsr_mode if use_avsr else "none"
     avsr_provider = get_avsr_provider(avsr_mode) if use_avsr and not dry_run else None
 
+    # For eval, optionally skip OCR (very slow on long videos)
+    video_for_ocr = None if skip_ocr else video_path
+
     t0 = time.perf_counter()
     enhanced, report = correct_transcript(
         transcript=transcript,
         file_id="eval",
         custom_vocabulary=[],
         avsr_provider=avsr_provider,
-        video_url=video_path if use_avsr else None,
+        video_url=video_for_ocr if use_avsr else None,
         config=config,
     )
     elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -90,6 +94,8 @@ def main():
                         help="Run with/without AVSR for RQ4 ablation")
     parser.add_argument("--dry-run", action="store_true",
                         help="Dry-run mode (no model inference)")
+    parser.add_argument("--skip-ocr", action="store_true",
+                        help="Skip OCR extraction (much faster for long videos)")
     args = parser.parse_args()
 
     output_dir = Path(args.output)
@@ -98,7 +104,7 @@ def main():
     wer_calc = WERCalculator(normalize=True)
     domain_vocab = load_domain_vocab()
     vocab_terms = merge_vocabularies([], domain_vocab)
-    term_list = [t["term"] for t in vocab_terms]
+    term_list = vocab_terms  # compute_tter expects list of dicts, not strings
 
     manifest = load_manifest(args.dataset)
     print(f"\n=== Full Evaluation ({len(manifest)} videos) ===\n")
@@ -139,7 +145,8 @@ def main():
         # Run correction
         try:
             enhanced, report, elapsed_ms = run_correction(
-                sa_transcript, video_path, use_avsr=True, dry_run=args.dry_run
+                sa_transcript, video_path, use_avsr=True,
+                dry_run=args.dry_run, skip_ocr=args.skip_ocr,
             )
             latencies_ms.append(elapsed_ms)
 

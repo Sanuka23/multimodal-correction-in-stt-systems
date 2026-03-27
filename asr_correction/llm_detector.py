@@ -55,6 +55,7 @@ class DetectedError:
     likely_correct: str
     reason: str = ""
     needs_avsr: bool = False
+    needs_ocr: bool = False
     char_position: int = 0
 
 
@@ -85,7 +86,9 @@ def _build_detection_prompt(
     prompt += (
         "Find words that are clearly wrong — misspelled names, garbled technical terms, "
         "words that don't fit the context. Do NOT flag words that are correct.\n\n"
-        'Respond with JSON: {"suspects": [{"word": "wrong_word", "likely_correct": "correct_word"}, ...], "confidence": 0.9}\n'
+        "For each suspect, also indicate if you need to see the screen/slides to confirm "
+        "(needs_ocr=true for names, UI text, or ambiguous terms; false for obvious audio errors).\n\n"
+        'Respond with JSON: {"suspects": [{"word": "wrong_word", "likely_correct": "correct_word", "needs_ocr": false}, ...], "confidence": 0.9}\n'
         'If no errors: {"suspects": [], "confidence": 0.99}'
     )
     return prompt
@@ -178,7 +181,7 @@ def _run_llm_detection(
         # Use raw inference to get the full JSON response (not the correction parser)
         raw_response = run_inference_raw(
             prompt, DETECTION_SYSTEM_PROMPT, model, tokenizer,
-            max_tokens=256,
+            max_tokens=1024,
         )
 
         # Parse suspects directly from raw model output
@@ -213,8 +216,18 @@ def _run_llm_detection(
                 likely_correct=likely,
                 reason=s.get("reason", ""),
                 needs_avsr=s.get("needs_avsr", False),
+                needs_ocr=s.get("needs_ocr", False),
                 char_position=pos,
             ))
+
+    # Log which suspects the LLM wants OCR for
+    ocr_requests = [d for d in all_detected if d.needs_ocr]
+    if ocr_requests:
+        logger.info("LLM OCR requests: %d/%d suspects need screen text:", len(ocr_requests), len(all_detected))
+        for d in ocr_requests:
+            logger.info("  OCR needed: '%s' → '%s' (pos=%d)", d.word, d.likely_correct, d.char_position)
+    else:
+        logger.info("LLM OCR requests: none — all suspects resolvable from audio alone")
 
     return all_detected
 

@@ -65,13 +65,15 @@ class CorrectionConfig:
 
     def __post_init__(self):
         """Resolve paths relative to module directory and apply env overrides."""
-        # Adapter path — disabled for Qwen3.5 (no fine-tuned adapters yet)
-        # Old Qwen2.5 adapters are incompatible with the new model
+        # Adapter path — prompt-only mode (no adapters)
+        # LoRA fine-tune experiments:
+        #   v1 (1000 iters): too aggressive (Kimi→Mimi, Sheldon→Tim)
+        #   v2 (v1+100-200 hard neg iters): too passive (0 corrections)
+        # Base Qwen3.5-9B + validation step gives best balance
         if self.adapter_path is None:
             env_val = os.environ.get("ASR_CORRECTION_ADAPTER_PATH")
             if env_val:
                 self.adapter_path = env_val
-            # else: don't auto-load old adapters
 
         # Model path — disabled, download fresh from HuggingFace
         # Old Qwen2.5 local weights are incompatible with Qwen3.5
