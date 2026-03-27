@@ -57,7 +57,7 @@ class CorrectionConfig:
 
     # Whisper Pass 2 (Step 4.5 — re-transcribe flagged segments with vocab prompt)
     whisper_pass2_enabled: bool = True
-    whisper_model_size: str = "base"  # "tiny", "base", "small", "medium"
+    whisper_model_size: str = "small"  # "tiny", "base", "small", "medium"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
     whisper_max_segments: int = 20
