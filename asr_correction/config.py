@@ -52,6 +52,17 @@ class CorrectionConfig:
     avsr_max_segments: int = 20  # Max segments to analyze in Pass 2
     avsr_model_dir: Optional[str] = None  # Path to auto_avsr repo (for auto_avsr mode)
 
+    # Quick OCR (Step 3 — fast whole-video scan)
+    quick_ocr_num_frames: int = 10
+
+    # Whisper Pass 2 (Step 4.5 — re-transcribe flagged segments with vocab prompt)
+    whisper_pass2_enabled: bool = True
+    whisper_model_size: str = "base"  # "tiny", "base", "small", "medium"
+    whisper_device: str = "cpu"
+    whisper_compute_type: str = "int8"
+    whisper_max_segments: int = 20
+    whisper_segment_padding_s: float = 2.0
+
     # Runtime
     dry_run: bool = False
     backend: Optional[str] = None
