@@ -15,9 +15,19 @@ venv/
 # Model weights (too large for git)
 asr_correction/model_weights/
 asr_correction/adapters/*.safetensors
+asr_correction/adapters_qwen35/
+asr_correction/adapters_qwen35_v2/
+asr_correction/adapters_v2/
+models/
 
 # Collected training data
 asr_correction/collected_data/
+
+# Generated training figures (regenerable from notebook)
+training/fig_*.png
+
+# Credentials
+vision-key.json
 
 # OS
 .DS_Store

@@ -1,0 +1,57 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;700;800&family=Inter:wght@400;500;600&family=Space+Grotesk:wght@400;500;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html { background-color: #0b1326; }
+body { font-family: 'Inter', sans-serif; color: #dae2fd; margin: 0; }
+
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: #0b1326; }
+::-webkit-scrollbar-thumb { background: #2d3449; border-radius: 9999px; }
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(123, 208, 255, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(123, 208, 255, 0); }
+}
+.step-running { animation: pulse-glow 1.5s ease-in-out infinite; }
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.live-dot { animation: blink 1.5s ease-in-out infinite; }
+
+.obsidian-glass {
+  background: rgba(19, 27, 46, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.flux-card {
+  background-color: #131b2e;
+  border: 1px solid rgba(144, 144, 151, 0.1);
+}
+
+.node-active {
+  box-shadow: 0 0 20px rgba(123, 208, 255, 0.2);
+}
+
+.step-gradient-active {
+  background: linear-gradient(135deg, #7bd0ff 0%, #008abb 100%);
+}
+
+.loss-gradient {
+  background: linear-gradient(180deg, rgba(123, 208, 255, 0.15) 0%, rgba(123, 208, 255, 0) 100%);
+}
+
+.diff-added { color: #4edea3; font-weight: 700; padding: 0 2px; }
+.diff-removed { color: #ffb4ab; text-decoration: line-through; padding: 0 2px; opacity: 0.7; }
+.hint-tag { font-size: 9px; vertical-align: super; background: #222a3d; color: #7bd0ff; padding: 1px 4px; border-radius: 4px; margin-left: 2px; }
+.vocab-context { font-size: 10px; color: #c6c6cd; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+
+@keyframes slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
