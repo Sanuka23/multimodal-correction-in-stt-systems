@@ -150,7 +150,7 @@ def run_inference(
         logger.warning("Model/tokenizer is None — returning fallback response")
         return _fallback_response()
 
-    logger.info("Running inference (backend=%s, max_tokens=%d)", _backend, max_tokens)
+    logger.debug("Running inference (backend=%s, max_tokens=%d)", _backend, max_tokens)
     logger.debug("Prompt: %s", prompt[:200])
 
     messages = [
@@ -164,7 +164,8 @@ def run_inference(
         from mlx_lm import generate
 
         formatted = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
+            messages, tokenize=False, add_generation_prompt=True,
+            enable_thinking=False,
         )
         response = generate(
             model, tokenizer, prompt=formatted, max_tokens=max_tokens
@@ -173,7 +174,8 @@ def run_inference(
         import torch
 
         formatted = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
+            messages, tokenize=False, add_generation_prompt=True,
+            enable_thinking=False,
         )
         inputs = tokenizer(formatted, return_tensors="pt").to(model.device)
         with torch.no_grad():
@@ -185,12 +187,12 @@ def run_inference(
         return _fallback_response()
 
     inference_ms = (_time.time() - t0) * 1000
-    logger.info("Inference completed in %.0fms", inference_ms)
-    logger.info("Raw model response: %s", response[:500] if response else "(empty)")
+    logger.debug("Inference completed in %.0fms", inference_ms)
+    logger.debug("Raw model response: %s", response[:300] if response else "(empty)")
 
     result = _parse_response(response)
-    logger.info("Parsed result: confidence=%.2f, changes=%s, need_lip=%s",
-                result.get("confidence", 0), result.get("changes", []), result.get("need_lip", False))
+    logger.debug("Parsed result: confidence=%.2f, changes=%s",
+                result.get("confidence", 0), result.get("changes", []))
     return result
 
 
@@ -221,6 +223,61 @@ def _fallback_response(raw: str = "") -> dict:
     if raw:
         result["raw_response"] = raw
     return result
+
+
+def run_inference_raw(
+    prompt: str,
+    system_prompt: str,
+    model=None,
+    tokenizer=None,
+    max_tokens: int = 512,
+) -> str:
+    """Run inference and return raw response string (no parsing)."""
+    import time as _time
+
+    if model is None or tokenizer is None:
+        logger.warning("Model/tokenizer is None — returning empty string")
+        return ""
+
+    logger.debug("Running raw inference (backend=%s, max_tokens=%d)", _backend, max_tokens)
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prompt},
+    ]
+
+    t0 = _time.time()
+
+    if _backend == "mlx":
+        from mlx_lm import generate
+
+        formatted = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True,
+            enable_thinking=False,
+        )
+        response = generate(
+            model, tokenizer, prompt=formatted, max_tokens=max_tokens
+        )
+    elif _backend == "transformers":
+        import torch
+
+        formatted = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True,
+            enable_thinking=False,
+        )
+        inputs = tokenizer(formatted, return_tensors="pt").to(model.device)
+        with torch.no_grad():
+            outputs = model.generate(**inputs, max_new_tokens=max_tokens)
+        response = tokenizer.decode(
+            outputs[0][inputs.input_ids.shape[1] :], skip_special_tokens=True
+        )
+    else:
+        return ""
+
+    inference_ms = (_time.time() - t0) * 1000
+    logger.debug("Raw inference completed in %.0fms", inference_ms)
+    logger.debug("Raw model response: %s", response[:300] if response else "(empty)")
+    return response
 
 
 def unload_model():

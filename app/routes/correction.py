@@ -38,6 +38,63 @@ def _run_in_thread(fn):
     return loop.run_in_executor(None, fn)
 
 
+@router.post("/asr-analyze")
+async def asr_analyze(
+    request: ASRCorrectionRequest,
+    user_id: str = Depends(get_jwt_info),
+):
+    """Analyze a transcript: detect errors + classify meeting topic/field.
+
+    Lightweight — no correction, no OCR, no AVSR. Returns errors and topic info.
+    """
+    from asr_correction import analyze_transcript, CorrectionConfig
+
+    start_time = time.time()
+
+    transcript_text = _extract_text(request.transcript)
+    logger.info(
+        "=== ASR Analyze Request ===\n"
+        "  file_id:        %s\n"
+        "  user_id:        %s\n"
+        "  transcript_len: %d chars",
+        request.file_id, user_id, len(transcript_text),
+    )
+
+    # Parse custom vocabulary
+    vocab = request.custom_vocabulary
+    if isinstance(vocab, str):
+        vocab = [v.strip() for v in vocab.split("\n") if v.strip()]
+
+    config = CorrectionConfig(dry_run=False)
+
+    def _run_analysis():
+        return analyze_transcript(
+            transcript=request.transcript,
+            file_id=request.file_id,
+            custom_vocabulary=vocab,
+            config=config,
+        )
+
+    try:
+        result = await _run_in_thread(_run_analysis)
+
+        duration_ms = (time.time() - start_time) * 1000
+        logger.info(
+            "=== Analyze Complete === file_id=%s | %.0fms | %d errors | field=%s | topic=%s",
+            request.file_id, duration_ms,
+            len(result["errors"]),
+            result["topic_info"]["field"],
+            result["topic_info"]["topic"],
+        )
+
+        return result
+
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error("ASR analysis failed after %.0fms: %s", duration_ms, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"ASR analysis failed: {str(e)}")
+
+
 @router.post("/asr-correct")
 async def asr_correct(
     request: ASRCorrectionRequest,
@@ -85,44 +142,15 @@ async def asr_correct(
     })
 
     try:
-        # Check for pre-existing OCR (provided or cached)
+        # OCR disabled for now
         ocr_provider = None
-        ocr_xml_data = request.ocr_xml
+        logger.info("OCR: Disabled — skipping OCR extraction")
+        await update_job_step(job_id, "ocr_extraction", "skipped", details={"reason": "disabled"})
 
-        await update_job_step(job_id, "ocr_extraction", "running")
-        ocr_step_start = time.time()
-
-        if ocr_xml_data:
-            logger.info("OCR: Using provided ocr_xml (%d chars)", len(ocr_xml_data))
-        elif request.video_url:
-            cached = await get_cached_ocr(request.file_id)
-            if cached:
-                logger.info("OCR: Using cached OCR from dashboard DB (%d chars)", len(cached))
-                ocr_xml_data = cached
-            else:
-                logger.info("OCR: No cache — will use targeted extraction after segment selection")
-
-        ocr_duration_ms = (time.time() - ocr_step_start) * 1000
-
-        if ocr_xml_data:
-            def ocr_callback(file_id: str, start_time: float, end_time: float):
-                return ocr_xml_data
-            ocr_provider = ocr_callback
-
-        await update_job_step(job_id, "ocr_extraction", "completed", duration_ms=ocr_duration_ms, details={
-            "has_ocr": bool(ocr_xml_data),
-            "ocr_chars": len(ocr_xml_data) if ocr_xml_data else 0,
-            "source": "provided" if request.ocr_xml else ("cached" if ocr_xml_data else "targeted"),
-        })
-
-        # Initialize AVSR provider
-        from asr_correction.avsr import get_avsr_provider
-        _avsr_config = CorrectionConfig(dry_run=False)
-        avsr_provider = get_avsr_provider(_avsr_config.avsr_mode, model_dir=_avsr_config.avsr_model_dir)
-
-        await update_job_step(job_id, "avsr_extraction", "pending" if avsr_provider else "skipped", details={
-            "mode": _avsr_config.avsr_mode if avsr_provider else "disabled",
-        })
+        # AVSR disabled for now
+        avsr_provider = None
+        logger.info("AVSR: Disabled — skipping AVSR initialization")
+        await update_job_step(job_id, "avsr_extraction", "skipped", details={"reason": "disabled"})
 
         # Parse custom vocabulary
         await update_job_step(job_id, "vocab_merge", "running")
@@ -154,9 +182,9 @@ async def asr_correct(
                 transcript=request.transcript,
                 file_id=request.file_id,
                 custom_vocabulary=vocab,
-                ocr_provider=ocr_provider,
-                avsr_provider=avsr_provider,
-                video_url=request.video_url,
+                ocr_provider=None,
+                avsr_provider=None,
+                video_url=None,  # OCR/AVSR disabled for now
                 config=config,
             )
 
@@ -204,7 +232,7 @@ async def asr_correct(
                               "confidence": round(r.confidence, 2), "need_lip": r.need_lip}
                              for r in report.results if r.need_lip or (not r.applied and r.confidence < 0.8)]
 
-        if avsr_provider and video_url_for_avsr and lip_needed:
+        if avsr_provider and request.video_url and lip_needed:
             await update_job_step(job_id, "avsr_extraction", "completed", details={
                 "mode": config.avsr_mode,
                 "segments_analyzed": min(len(lip_needed), config.avsr_max_segments),
@@ -315,6 +343,20 @@ async def asr_correct(
             request.file_id, duration_ms, report.corrections_applied, report.corrections_attempted,
         )
 
+        topic_info = getattr(report, "topic_info", {})
+        if topic_info:
+            logger.info(
+                "=== Topic Classification ===\n"
+                "  Field:       %s\n"
+                "  Topic:       %s\n"
+                "  Description: %s\n"
+                "  Suggested:   %s",
+                topic_info.get("field", "unknown"),
+                topic_info.get("topic", "unknown"),
+                topic_info.get("description", ""),
+                topic_info.get("suggested_vocab", []),
+            )
+
         return {
             "enhanced_transcript": enhanced,
             "correction_report": {
@@ -325,6 +367,7 @@ async def asr_correct(
                 "vocab_used": vocab_terms,
                 "corrections": corrections_detail,
                 "selector": getattr(report, "selector_info", {}),
+                "topic_info": topic_info,
             },
         }
 
