@@ -190,33 +190,28 @@ def correct_transcript(
     else:
         logger.info("Step 3: No video URL — skipping OCR")
 
+    # Step 3.5: Extract structured vocab from OCR text (names, products, companies)
+    ocr_vocab = []
+    if quick_ocr_hints and model and not config.dry_run:
+        ocr_vocab = _extract_vocab_from_ocr(quick_ocr_hints, model, tokenizer)
+
     # Step 4: Whisper Pass 2 — re-transcribe flagged segments with vocab hints
     whisper_segments = {}
     if video_url and flagged and not config.dry_run:
         try:
             from .whisper_pass2 import retranscribe_flagged_segments, build_initial_prompt
 
-            # Build initial prompt from all vocab sources
+            # Build initial prompt — OCR-extracted terms get highest priority
             topic_suggested = topic_info.get("suggested_vocab", []) if topic_info else []
             custom_terms = [t["term"] for t in vocab_terms]
-            # Extract speaker names from OCR (look for "Firstname Lastname" patterns)
-            ocr_names = []
-            for h in quick_ocr_hints:
-                words = h.split()
-                if 2 <= len(words) <= 3 and all(w[0].isupper() for w in words if w):
-                    # Filter out UI text like "Stop presenting", "Add people"
-                    if not any(skip in h.lower() for skip in [
-                        "stop", "add", "search", "meeting", "presenting", "contributors",
-                        "view", "top", "you are",
-                    ]):
-                        ocr_names.append(h)
-            ocr_names = ocr_names[:10]
+            ocr_names = [v["term"] for v in ocr_vocab if v.get("type") == "person"]
+            ocr_products = [v["term"] for v in ocr_vocab if v.get("type") in ("product", "company")]
             web_terms = [v.get("term", "") for v in web_vocab] if web_vocab else []
 
             initial_prompt = build_initial_prompt(
-                topic_vocab=topic_suggested,
-                custom_vocab=custom_terms,
                 ocr_names=ocr_names,
+                custom_vocab=custom_terms + ocr_products,
+                topic_vocab=topic_suggested,
                 web_vocab=web_terms,
             )
 
@@ -246,11 +241,14 @@ def correct_transcript(
             from .reconciler import reconcile_segments
 
             term_names = [t["term"] for t in vocab_terms]
+            # OCR-confirmed terms as protected ground truth
+            protected_terms = [v["term"] for v in ocr_vocab]
             enhanced, all_changes = reconcile_segments(
                 original_transcript=transcript,
                 whisper_segments=whisper_segments,
                 vocab_terms=term_names,
                 ocr_hints=quick_ocr_hints,
+                protected_terms=protected_terms,
                 model=model,
                 tokenizer=tokenizer,
                 config=config,
@@ -542,6 +540,81 @@ def _enrich_vocab_from_web(topic_info, model, tokenizer):
         logger.warning("  Vocab extraction failed: %s", e)
 
     logger.info("=" * 60)
+    return []
+
+
+def _extract_vocab_from_ocr(ocr_hints, model, tokenizer):
+    """Extract person names, product names, and company names from OCR text.
+
+    Uses the LLM to identify high-value terms from raw screen text.
+    These become protected ground truth for the reconciler.
+    """
+    from .model import run_inference_raw
+
+    if not ocr_hints or not model:
+        return []
+
+    t0 = time.time()
+
+    # Send a sample of OCR text (not all 238 lines — just enough for context)
+    sample = "\n".join(ocr_hints[:80])
+
+    prompt = (
+        "Extract person names, product/tool names, and company names from this screen text.\n"
+        "This text was read from a video meeting screen using OCR.\n\n"
+        f"Screen text:\n{sample}\n\n"
+        "Rules:\n"
+        "- Only extract proper nouns (names, products, companies)\n"
+        "- Ignore UI text like 'Stop presenting', 'Add people', 'Search'\n"
+        "- Ignore URLs, email addresses, and random characters\n"
+        "- Include full names for people (e.g. 'Avindi De Silva' → extract 'Avindi')\n\n"
+        'Respond with JSON array: [{"term": "Avindi", "type": "person"}, '
+        '{"term": "ChartMogul", "type": "product"}, {"term": "Stripe", "type": "company"}]\n'
+        "Only include terms you are confident about."
+    )
+
+    system = "You extract structured data from OCR text. Output only valid JSON."
+
+    try:
+        raw = run_inference_raw(prompt, system, model, tokenizer, max_tokens=512)
+
+        import json as _json
+        import re as _re
+
+        # Parse JSON array from response
+        match = _re.search(r'\[.*\]', raw, _re.DOTALL)
+        if match:
+            parsed = _json.loads(match.group())
+            if isinstance(parsed, list):
+                # Validate and deduplicate
+                seen = set()
+                valid = []
+                for item in parsed:
+                    if not isinstance(item, dict):
+                        continue
+                    term = item.get("term", "").strip()
+                    term_type = item.get("type", "").strip().lower()
+                    if not term or len(term) < 2 or term.lower() in seen:
+                        continue
+                    if term_type not in ("person", "product", "company", "tool"):
+                        continue
+                    seen.add(term.lower())
+                    valid.append({"term": term, "type": term_type})
+
+                duration_ms = (time.time() - t0) * 1000
+                logger.info("============================================================")
+                logger.info("Step 3.5: OCR VOCAB EXTRACTION")
+                logger.info("  Extracted %d terms from OCR in %.0fms:", len(valid), duration_ms)
+                for v in valid[:15]:
+                    logger.info("    [%s] %s", v["type"], v["term"])
+                if len(valid) > 15:
+                    logger.info("    ... and %d more", len(valid) - 15)
+                logger.info("============================================================")
+                return valid
+
+    except Exception as e:
+        logger.warning("Step 3.5: OCR vocab extraction failed — %s", e)
+
     return []
 
 

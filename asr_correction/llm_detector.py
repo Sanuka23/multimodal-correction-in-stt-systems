@@ -181,7 +181,7 @@ def _run_llm_detection(
         # Use raw inference to get the full JSON response (not the correction parser)
         raw_response = run_inference_raw(
             prompt, DETECTION_SYSTEM_PROMPT, model, tokenizer,
-            max_tokens=1024,
+            max_tokens=1536,
         )
 
         # Parse suspects directly from raw model output
