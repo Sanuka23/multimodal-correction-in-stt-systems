@@ -29,6 +29,7 @@ def _build_reconciliation_prompt(
     whisper_text: str,
     vocab_terms: List[str],
     ocr_hints: List[str],
+    protected_terms: List[str] = None,
 ) -> str:
     """Build prompt for comparing two transcriptions."""
     vocab_str = json.dumps(vocab_terms[:50]) if vocab_terms else "[]"
@@ -41,21 +42,31 @@ def _build_reconciliation_prompt(
             + "\n\n"
         )
 
+    protected_section = ""
+    if protected_terms:
+        protected_section = (
+            "PROTECTED TERMS (confirmed by on-screen text — do NOT change these spellings):\n"
+            + ", ".join(protected_terms[:30])
+            + "\nIf either version contains one of these terms spelled correctly, KEEP that spelling.\n\n"
+        )
+
     return (
         "You have two ASR transcriptions of the SAME audio segment. "
         "Produce the best combined version.\n\n"
         f"Version A (original): {original_text}\n\n"
         f"Version B (re-transcription): {whisper_text}\n\n"
         f"Known vocabulary: {vocab_str}\n\n"
+        f"{protected_section}"
         f"{ocr_section}"
         "Rules:\n"
         "1. Start with Version A as the base text (keep its structure, length, and flow)\n"
-        "2. Only SWAP individual misheard words — never rewrite phrases or sentences\n"
-        "3. For names: if Version B has a name that matches OCR or vocabulary, use it\n"
+        "2. Only SWAP individual words — one word for one word. NEVER replace one word with multiple words\n"
+        "3. For names: if Version B has a name that matches protected terms or vocabulary, use it\n"
         "4. For tech terms: if Version B matches known vocabulary better, use it\n"
         "5. For common words: keep Version A unless Version B is clearly better\n"
-        "6. NEVER add or remove words. The output must have the same number of words as Version A\n"
-        "7. NEVER change sentence structure or word order\n\n"
+        "6. NEVER add or remove words. The output must have the same word count as Version A\n"
+        "7. NEVER change sentence structure or word order\n"
+        "8. Each swap must be exactly ONE word → ONE word\n\n"
         'Respond with JSON:\n'
         '{"text": "the final best version based on Version A with word swaps from B", '
         '"swaps": ["wordA → wordB", ...]}\n'
@@ -82,6 +93,9 @@ def _parse_response(response: str, original_text: str) -> dict:
                         old = parts[0].strip().strip("'\"")
                         new = parts[1].strip().strip("'\"")
                         if old.lower() != new.lower() and old and new:
+                            # Filter phrase swaps: reject if either side has multiple words
+                            if len(old.split()) > 2 or len(new.split()) > 2:
+                                continue
                             real_swaps.append(f"{old} → {new}")
 
             if text and text.strip():
@@ -101,6 +115,7 @@ def reconcile_segments(
     model,
     tokenizer,
     config,
+    protected_terms: List[str] = None,
 ) -> Tuple[dict, list]:
     """Compare original vs Whisper transcription per segment, output best version.
 
@@ -154,6 +169,7 @@ def reconcile_segments(
             # Build and run reconciliation prompt
             prompt = _build_reconciliation_prompt(
                 original_text, whisper_portion, vocab_terms, ocr_hints,
+                protected_terms=protected_terms,
             )
 
             raw = run_inference_raw(
