@@ -116,10 +116,17 @@ def correct_transcript(
 
     logger.info("Step 2: Found %d candidates in %d/%d segments",
                 len(candidates), len(flagged), len(analyses))
-    for i, c in enumerate(candidates):
-        logger.info("  Candidate %d: '%s' (error='%s', category='%s', ts=%.1f-%.1f)",
-                     i + 1, c.term, c.error_found, c.category,
-                     c.timestamp_start, c.timestamp_end)
+    for i, c in enumerate(candidates[:10]):
+        logger.info("  Candidate %d: '%s' (error='%s', category='%s')",
+                     i + 1, c.term, c.error_found, c.category)
+    if len(candidates) > 10:
+        logger.info("  ... and %d more candidates (showing first 10)", len(candidates) - 10)
+
+    # Step 2.5: Topic/field classification
+    topic_info = _classify_topic(transcript, vocab_terms, candidates, model, tokenizer)
+
+    # Step 2.6: Web vocab enrichment (search web using description, extract vocab with Qwen)
+    web_vocab = _enrich_vocab_from_web(topic_info, model, tokenizer)
 
     # Step 3: Targeted OCR extraction (only for flagged segments)
     ocr_needs = [a for a in flagged if a.needs_ocr]
@@ -127,23 +134,25 @@ def correct_transcript(
 
     if not ocr_provider and ocr_needs and video_url:
         # No cached OCR — do targeted extraction for flagged segments only
-        from .ocr_extractor import extract_ocr_for_segments
-        from .ocr_parser import create_ocr_provider_from_hints
+        try:
+            from .ocr_extractor import extract_ocr_for_segments
 
-        time_ranges = [(a.start, a.end) for a in ocr_needs]
-        logger.info("Step 3: Targeted OCR for %d segments (vs full video)", len(ocr_needs))
+            time_ranges = [(a.start, a.end) for a in ocr_needs]
+            logger.info("Step 3: Targeted OCR for %d segments (vs full video)", len(ocr_needs))
 
-        ocr_hints_by_ts = extract_ocr_for_segments(
-            video_url, time_ranges,
-            padding_s=config.ocr_window_seconds,
-            min_confidence=config.ocr_min_confidence,
-        )
+            ocr_hints_by_ts = extract_ocr_for_segments(
+                video_url, time_ranges,
+                padding_s=config.ocr_window_seconds,
+                min_confidence=getattr(config, 'ocr_min_confidence', 0.5),
+            )
 
-        if ocr_hints_by_ts:
-            targeted_ocr_provider = _create_targeted_ocr_provider(ocr_hints_by_ts)
-            logger.info("Step 3: Targeted OCR found text at %d timestamps", len(ocr_hints_by_ts))
-        else:
-            logger.info("Step 3: Targeted OCR found no text")
+            if ocr_hints_by_ts:
+                targeted_ocr_provider = _create_targeted_ocr_provider(ocr_hints_by_ts)
+                logger.info("Step 3: Targeted OCR found text at %d timestamps", len(ocr_hints_by_ts))
+            else:
+                logger.info("Step 3: Targeted OCR found no text")
+        except (ImportError, Exception) as e:
+            logger.warning("Step 3: Targeted OCR failed — %s", e)
     elif ocr_provider:
         logger.info("Step 3: Using pre-cached OCR provider")
     else:
@@ -253,12 +262,313 @@ def correct_transcript(
         "needs_avsr": len(avsr_needs) if avsr_needs else 0,
         "candidates_found": len(candidates),
     }
+    report.topic_info = topic_info
 
     total_ms = (time.time() - pipeline_start) * 1000
     report.processing_time_ms = total_ms
     logger.info("Pipeline complete in %.0fms (selector → targeted OCR → correction)", total_ms)
 
     return enhanced, report
+
+
+def analyze_transcript(
+    transcript: dict,
+    file_id: str,
+    custom_vocabulary: list = None,
+    config: CorrectionConfig = None,
+) -> dict:
+    """Analyze a transcript: detect errors + classify meeting topic/field.
+
+    Lightweight pipeline — no correction, no OCR, no AVSR.
+    Returns dict with errors found and topic classification.
+    """
+    import json
+
+    if config is None:
+        config = CorrectionConfig()
+
+    pipeline_start = time.time()
+
+    # Step 1: Merge vocabularies
+    domain_vocab = load_domain_vocab(config.domain_vocab_path)
+    vocab_terms = merge_vocabularies(custom_vocabulary, domain_vocab)
+    logger.info("[analyze] Step 1: Merged %d domain + %d custom → %d vocab terms",
+                len(domain_vocab), len(custom_vocabulary or []), len(vocab_terms))
+
+    # Step 2: Error detection (LLM primary, rule-based fallback)
+    from .model import load_model, run_inference_raw
+    from .llm_detector import detect_errors
+
+    model, tokenizer = None, None
+    if not config.dry_run:
+        try:
+            model, tokenizer = load_model(
+                adapter_path=config.adapter_path,
+                model_path=config.model_path,
+                base_model=config.base_model,
+                backend=config.backend,
+            )
+        except Exception as e:
+            logger.error("[analyze] Model loading failed: %s", e)
+
+    analyses = detect_errors(
+        transcript, vocab_terms, model, tokenizer, config=config,
+    )
+
+    flagged = [a for a in analyses if a.needs_correction]
+    candidates = [c for a in flagged for c in a.candidates]
+
+    errors = []
+    for c in candidates:
+        errors.append({
+            "error_found": c.error_found,
+            "likely_correct": c.term,
+            "category": c.category,
+            "context": c.context,
+        })
+
+    logger.info("[analyze] Step 2: Found %d errors in %d/%d segments",
+                len(errors), len(flagged), len(analyses))
+    for i, e in enumerate(errors):
+        logger.info("  Error %d: '%s' → '%s' (category=%s)",
+                     i + 1, e["error_found"], e["likely_correct"], e["category"])
+
+    # Step 3: Topic/field classification
+    transcript_text = transcript.get("text", "")
+    if not transcript_text:
+        segments = transcript.get("segments", [])
+        transcript_text = " ".join(s.get("text", "").strip() for s in segments if s.get("text", ""))
+
+    # Build classification prompt
+    vocab_list = [t["term"] for t in vocab_terms[:30]]
+    error_summary = ", ".join(f"'{e['error_found']}'→'{e['likely_correct']}'" for e in errors[:15])
+
+    classify_prompt = (
+        "Analyze this meeting transcript and classify it.\n\n"
+        f"Transcript: {transcript_text[:3000]}\n\n"
+    )
+    if vocab_list:
+        classify_prompt += f"Vocabulary terms: {json.dumps(vocab_list)}\n\n"
+    if error_summary:
+        classify_prompt += f"ASR errors detected: {error_summary}\n\n"
+
+    classify_prompt += (
+        "Respond with JSON:\n"
+        "{\n"
+        '  "field": "broad field (tech, business, healthcare, education, finance, entertainment, etc.)",\n'
+        '  "topic": "specific topic (e.g. AWS cloud deployment, marketing campaign planning)",\n'
+        '  "description": "1-2 sentence summary of what this meeting discusses",\n'
+        '  "suggested_vocab": ["term1", "term2", ...]\n'
+        "}\n"
+        "The suggested_vocab should be 10-20 domain-specific words likely discussed in this type of meeting."
+    )
+
+    system_prompt = "You are a meeting transcript analyzer. Classify the meeting by field and topic, and suggest domain-specific vocabulary."
+
+    topic_info = {"field": "unknown", "topic": "unknown", "description": "", "suggested_vocab": []}
+
+    if model is not None and tokenizer is not None:
+        try:
+            raw_response = run_inference_raw(
+                classify_prompt, system_prompt, model, tokenizer, max_tokens=512,
+            )
+            # Parse JSON from response
+            import re
+            json_match = re.search(r"\{.*\}", raw_response, re.DOTALL)
+            if json_match:
+                parsed = json.loads(json_match.group())
+                topic_info = {
+                    "field": parsed.get("field", "unknown"),
+                    "topic": parsed.get("topic", "unknown"),
+                    "description": parsed.get("description", ""),
+                    "suggested_vocab": parsed.get("suggested_vocab", []),
+                }
+        except Exception as e:
+            logger.warning("[analyze] Topic classification failed: %s", e)
+    else:
+        logger.warning("[analyze] No model available — skipping topic classification")
+
+    logger.info("[analyze] Step 3: Topic classification:")
+    logger.info("  Field:       %s", topic_info["field"])
+    logger.info("  Topic:       %s", topic_info["topic"])
+    logger.info("  Description: %s", topic_info["description"])
+    logger.info("  Suggested vocab: %s", topic_info["suggested_vocab"])
+
+    total_ms = (time.time() - pipeline_start) * 1000
+    logger.info("[analyze] Complete in %.0fms — %d errors, field=%s, topic=%s",
+                total_ms, len(errors), topic_info["field"], topic_info["topic"])
+
+    return {
+        "file_id": file_id,
+        "errors": errors,
+        "topic_info": topic_info,
+        "processing_time_ms": total_ms,
+    }
+
+
+def _enrich_vocab_from_web(topic_info, model, tokenizer):
+    """Step 2.6: Search web using topic description, extract vocab with Qwen."""
+    import json as _json
+    import re as _re
+    from .model import run_inference_raw
+
+    description = topic_info.get("description", "")
+    field = topic_info.get("field", "")
+    topic = topic_info.get("topic", "")
+
+    if not description or model is None or tokenizer is None:
+        logger.info("Step 2.6: Skipped — no description or no model")
+        return []
+
+    # Search DuckDuckGo
+    logger.info("=" * 60)
+    logger.info("Step 2.6: WEB VOCAB ENRICHMENT")
+
+    snippets = []
+    try:
+        from ddgs import DDGS
+
+        queries = [
+            f"{field} {topic} terminology glossary",
+            f"{description[:100]} technical terms",
+        ]
+
+        for q in queries:
+            logger.info("  Searching: %s", q[:80])
+            try:
+                with DDGS() as ddgs:
+                    results = list(ddgs.text(q, max_results=5))
+                for r in results:
+                    body = r.get("body", "")
+                    if body:
+                        snippets.append(body)
+            except Exception as e:
+                logger.warning("  Search failed: %s", e)
+
+    except ImportError:
+        logger.warning("  ddgs not installed — skipping web search")
+        logger.info("=" * 60)
+        return []
+
+    if not snippets:
+        logger.info("  No search results found")
+        logger.info("=" * 60)
+        return []
+
+    web_context = " ".join(snippets)[:2500]
+    logger.info("  Got %d chars of web context from %d snippets", len(web_context), len(snippets))
+
+    # Send to Qwen to extract vocab
+    extract_prompt = (
+        f"This meeting is about: {description}\n"
+        f"Field: {field}\n"
+        f"Topic: {topic}\n\n"
+        f"Web search context about this domain:\n{web_context}\n\n"
+        "Based on this, list domain-specific terms that ASR (speech-to-text) commonly gets wrong.\n\n"
+        "Return ONLY a JSON array:\n"
+        '[{"term": "Groq", "category": "company_name", "known_errors": ["Grok", "GROC"]}, ...]\n\n'
+        "Categories: product_name, tech_term, person_name, company_name, domain_term, tech_acronym, business_term\n"
+        "Give 10-20 terms. Focus on phonetically ambiguous terms. Pure JSON array, nothing else."
+    )
+
+    system_prompt = "You extract domain-specific vocabulary from web search results. Return only a JSON array."
+
+    try:
+        raw_response = run_inference_raw(
+            extract_prompt, system_prompt, model, tokenizer, max_tokens=512,
+        )
+
+        # Parse JSON array from response
+        json_match = _re.search(r'\[.*\]', raw_response, _re.DOTALL)
+        if json_match:
+            vocab = _json.loads(json_match.group())
+            logger.info("  Extracted %d vocab terms:", len(vocab))
+            for v in vocab:
+                logger.info("    %s (%s) — errors: %s",
+                           v.get("term", "?"), v.get("category", "?"),
+                           v.get("known_errors", []))
+            logger.info("=" * 60)
+            return vocab
+        else:
+            logger.warning("  No JSON array found in model response")
+            logger.info("  Raw response: %s", raw_response[:300])
+    except Exception as e:
+        logger.warning("  Vocab extraction failed: %s", e)
+
+    logger.info("=" * 60)
+    return []
+
+
+def _classify_topic(transcript, vocab_terms, candidates, model, tokenizer):
+    """Classify the meeting topic/field using the LLM."""
+    import json as _json
+    import re as _re
+    from .model import run_inference_raw
+
+    topic_info = {"field": "unknown", "topic": "unknown", "description": "", "suggested_vocab": []}
+
+    if model is None or tokenizer is None:
+        logger.warning("[topic] No model available — skipping topic classification")
+        return topic_info
+
+    # Build transcript text
+    transcript_text = transcript.get("text", "")
+    if not transcript_text:
+        segments = transcript.get("segments", [])
+        transcript_text = " ".join(s.get("text", "").strip() for s in segments if s.get("text", ""))
+
+    vocab_list = [t["term"] for t in vocab_terms[:30]]
+    error_summary = ", ".join(
+        f"'{c.error_found}'→'{c.term}'" for c in candidates[:15]
+    )
+
+    classify_prompt = (
+        "Analyze this meeting transcript and classify it.\n\n"
+        f"Transcript: {transcript_text[:3000]}\n\n"
+    )
+    if vocab_list:
+        classify_prompt += f"Vocabulary terms: {_json.dumps(vocab_list)}\n\n"
+    if error_summary:
+        classify_prompt += f"ASR errors detected: {error_summary}\n\n"
+
+    classify_prompt += (
+        "Respond with JSON:\n"
+        "{\n"
+        '  "field": "broad field (tech, business, healthcare, education, finance, entertainment, etc.)",\n'
+        '  "topic": "specific topic (e.g. AWS cloud deployment, marketing campaign planning)",\n'
+        '  "description": "1-2 sentence summary of what this meeting discusses",\n'
+        '  "suggested_vocab": ["term1", "term2", ...]\n'
+        "}\n"
+        "The suggested_vocab should be 10-20 domain-specific words likely discussed in this type of meeting."
+    )
+
+    system_prompt = "You are a meeting transcript analyzer. Classify the meeting by field and topic, and suggest domain-specific vocabulary."
+
+    try:
+        raw_response = run_inference_raw(
+            classify_prompt, system_prompt, model, tokenizer, max_tokens=512,
+        )
+        json_match = _re.search(r"\{.*\}", raw_response, _re.DOTALL)
+        if json_match:
+            parsed = _json.loads(json_match.group())
+            topic_info = {
+                "field": parsed.get("field", "unknown"),
+                "topic": parsed.get("topic", "unknown"),
+                "description": parsed.get("description", ""),
+                "suggested_vocab": parsed.get("suggested_vocab", []),
+            }
+    except Exception as e:
+        logger.warning("[topic] Topic classification failed: %s", e)
+
+    logger.info("=" * 60)
+    logger.info("Step 2.5: TOPIC CLASSIFICATION")
+    logger.info("  Field:       %s", topic_info["field"])
+    logger.info("  Topic:       %s", topic_info["topic"])
+    logger.info("  Description: %s", topic_info["description"])
+    logger.info("  Suggested vocab: %s", topic_info["suggested_vocab"])
+    logger.info("=" * 60)
+
+    return topic_info
 
 
 def _create_targeted_ocr_provider(ocr_hints_by_ts: dict):

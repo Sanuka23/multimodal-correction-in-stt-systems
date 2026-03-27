@@ -62,26 +62,30 @@ def _build_detection_prompt(
     transcript_chunk: str,
     vocab_terms: List[dict],
 ) -> str:
-    """Build the Pass 1 detection prompt — compact, detection-only."""
-    # Include top 50 vocab terms with known errors for grounding
-    term_entries = []
-    for t in vocab_terms[:50]:
-        errs = t.get("known_errors", [])
-        if errs:
-            term_entries.append(f"{t['term']} (often misheard as: {', '.join(errs[:3])})")
-        else:
-            term_entries.append(t["term"])
-    vocab_str = json.dumps(term_entries)
-
+    """Build the Pass 1 detection prompt — works with or without vocabulary."""
     prompt = (
-        "Review this ASR transcript and find words that are likely misrecognitions "
-        "of the vocabulary terms below.\n\n"
+        "Review this ASR transcript and find words that are likely ASR transcription errors.\n"
+        "Look for: misspelled proper nouns, technical terms, product names, "
+        "words that don't make sense in context, and words that sound like "
+        "something else.\n\n"
         f"ASR transcript: {transcript_chunk}\n\n"
-        f"Vocabulary: {vocab_str}\n\n"
-        "Find words that SOUND LIKE a vocabulary term but are spelled differently. "
-        "Do NOT flag words that are already correct. Do NOT flag common English words.\n\n"
-        'Respond with JSON: {"suspects": [{"word": "quadrant", "likely_correct": "Qdrant"}, '
-        '{"word": "sock two", "likely_correct": "SOC 2"}], "confidence": 0.9}\n'
+    )
+
+    # Add vocabulary if available (optional enhancement)
+    if vocab_terms:
+        term_entries = []
+        for t in vocab_terms[:50]:
+            errs = t.get("known_errors", [])
+            if errs:
+                term_entries.append(f"{t['term']} (often misheard as: {', '.join(errs[:3])})")
+            else:
+                term_entries.append(t["term"])
+        prompt += f"Known vocabulary (check these terms especially): {json.dumps(term_entries)}\n\n"
+
+    prompt += (
+        "Find words that are clearly wrong — misspelled names, garbled technical terms, "
+        "words that don't fit the context. Do NOT flag words that are correct.\n\n"
+        'Respond with JSON: {"suspects": [{"word": "wrong_word", "likely_correct": "correct_word"}, ...], "confidence": 0.9}\n'
         'If no errors: {"suspects": [], "confidence": 0.99}'
     )
     return prompt
@@ -154,7 +158,7 @@ def _run_llm_detection(
     config: CorrectionConfig,
 ) -> List[DetectedError]:
     """Run LLM detection on transcript chunks. Returns list of detected errors."""
-    from .model import run_inference
+    from .model import run_inference_raw
 
     full_text = transcript.get("text", "")
     segments = transcript.get("segments", [])
@@ -171,29 +175,15 @@ def _run_llm_detection(
     for i, chunk in enumerate(chunks):
         prompt = _build_detection_prompt(chunk["text"], vocab_terms)
 
-        result = run_inference(
+        # Use raw inference to get the full JSON response (not the correction parser)
+        raw_response = run_inference_raw(
             prompt, DETECTION_SYSTEM_PROMPT, model, tokenizer,
             max_tokens=256,
         )
 
-        # The model may return suspects in the changes field or raw response
-        raw = result.get("corrected", "") or ""
-        changes = result.get("changes", [])
-
-        # Try parsing the raw corrected text as detection JSON
-        suspects = _parse_detection_response(raw)
-
-        # If model returned changes in "word → correct" format, convert those
-        if not suspects and changes:
-            for change in changes:
-                s = str(change)
-                if "→" in s:
-                    parts = s.split("→")
-                    if len(parts) == 2:
-                        suspects.append({
-                            "word": parts[0].strip(),
-                            "likely_correct": parts[1].strip(),
-                        })
+        # Parse suspects directly from raw model output
+        logger.info("  Chunk %d/%d raw: %s", i + 1, len(chunks), raw_response[:200])
+        suspects = _parse_detection_response(raw_response)
 
         if suspects:
             logger.info("  Chunk %d/%d: %d suspects found", i + 1, len(chunks), len(suspects))
