@@ -502,24 +502,24 @@ def _enrich_vocab_from_web(topic_info, model, tokenizer):
     web_context = " ".join(snippets)[:2500]
     logger.info("  Got %d chars of web context from %d snippets", len(web_context), len(snippets))
 
-    # Send to Qwen to extract vocab
+    # Send to Qwen to extract vocab (simplified format — no known_errors to save tokens)
     extract_prompt = (
         f"This meeting is about: {description}\n"
         f"Field: {field}\n"
         f"Topic: {topic}\n\n"
         f"Web search context about this domain:\n{web_context}\n\n"
-        "Based on this, list domain-specific terms that ASR (speech-to-text) commonly gets wrong.\n\n"
-        "Return ONLY a JSON array:\n"
-        '[{"term": "Groq", "category": "company_name", "known_errors": ["Grok", "GROC"]}, ...]\n\n'
-        "Categories: product_name, tech_term, person_name, company_name, domain_term, tech_acronym, business_term\n"
-        "Give 10-20 terms. Focus on phonetically ambiguous terms. Pure JSON array, nothing else."
+        "List domain-specific terms that ASR (speech-to-text) commonly gets wrong.\n\n"
+        "Return ONLY a compact JSON array on a single line:\n"
+        '[{"term":"Groq","category":"company_name"},{"term":"Kubernetes","category":"tech_term"},...]\n\n'
+        "Categories: product_name, tech_term, person_name, company_name, domain_term, tech_acronym\n"
+        "Give 10-20 terms. Compact single-line JSON, no newlines."
     )
 
-    system_prompt = "You extract domain-specific vocabulary from web search results. Return only a JSON array."
+    system_prompt = "You extract domain-specific vocabulary. Return only a compact JSON array."
 
     try:
         raw_response = run_inference_raw(
-            extract_prompt, system_prompt, model, tokenizer, max_tokens=512,
+            extract_prompt, system_prompt, model, tokenizer, max_tokens=1024,
         )
 
         # Parse JSON array from response
@@ -556,8 +556,12 @@ def _extract_vocab_from_ocr(ocr_hints, model, tokenizer):
 
     t0 = time.time()
 
-    # Send a sample of OCR text (not all 238 lines — just enough for context)
-    sample = "\n".join(ocr_hints[:80])
+    # Deduplicate and evenly sample across ALL OCR lines (not just first 80)
+    unique = list(dict.fromkeys(ocr_hints))
+    if len(unique) > 150:
+        step = max(1, len(unique) // 150)
+        unique = unique[::step][:150]
+    sample = "\n".join(unique)
 
     prompt = (
         "Extract person names, product/tool names, and company names from this screen text.\n"
