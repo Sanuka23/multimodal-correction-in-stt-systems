@@ -1,10 +1,11 @@
-"""ScreenApp ASR Correction Module.
+"""ScreenApp ASR Correction Module (v2 — Whisper Reconciliation).
 
-Two-stage selective correction pipeline:
-1. Segment Selector — analyzes transcript + vocab to identify which segments
-   need fixing and which modality (OCR/AVSR) each needs.
-2. Targeted Correction — only fetches OCR/runs AVSR on flagged segments,
-   then corrects with the fine-tuned model.
+Pipeline:
+1. LLM Detection — identify ASR errors using Qwen3.5-9B
+2. Topic Classification + Web Vocab Enrichment
+3. Quick OCR — extract screen text from video frames
+4. Whisper Pass 2 — re-transcribe flagged segments with vocab hints
+5. LLM Reconciliation — compare original vs Whisper, pick best words
 
 Usage:
     from asr_correction import correct_transcript
@@ -22,11 +23,10 @@ import time
 
 from .config import CorrectionConfig
 from .data_collector import collect_correction_data
-from .segment_selector import select_segments
 from .types import CorrectionReport
 from .vocabulary import load_domain_vocab, merge_vocabularies
 
-__version__ = "4.0.0"  # Whisper reconciliation pipeline
+__version__ = "4.1.0"  # Whisper reconciliation pipeline + cleanup
 
 logger = logging.getLogger(__name__)
 
