@@ -32,13 +32,13 @@ def _build_reconciliation_prompt(
     protected_terms: List[str] = None,
 ) -> str:
     """Build prompt for comparing two transcriptions."""
-    vocab_str = json.dumps(vocab_terms[:50]) if vocab_terms else "[]"
+    vocab_str = json.dumps(vocab_terms) if vocab_terms else "[]"
 
     ocr_section = ""
     if ocr_hints:
         ocr_section = (
             "Screen text visible during this segment (from OCR):\n"
-            + "\n".join(f"  - {h}" for h in ocr_hints[:10])
+            + "\n".join(f"  - {h}" for h in ocr_hints[:15])
             + "\n\n"
         )
 
@@ -46,31 +46,32 @@ def _build_reconciliation_prompt(
     if protected_terms:
         protected_section = (
             "PROTECTED TERMS (confirmed by on-screen text — do NOT change these spellings):\n"
-            + ", ".join(protected_terms[:30])
+            + ", ".join(protected_terms)
             + "\nIf either version contains one of these terms spelled correctly, KEEP that spelling.\n\n"
         )
 
     return (
-        "You have two ASR transcriptions of the SAME audio segment. "
-        "Produce the best combined version.\n\n"
+        "You have two ASR transcriptions of the SAME audio segment and a vocabulary list. "
+        "Produce the best corrected version.\n\n"
         f"Version A (original): {original_text}\n\n"
         f"Version B (re-transcription): {whisper_text}\n\n"
-        f"Known vocabulary: {vocab_str}\n\n"
+        f"Known vocabulary (correct spellings of domain terms): {vocab_str}\n\n"
         f"{protected_section}"
         f"{ocr_section}"
         "Rules:\n"
         "1. Start with Version A as the base text (keep its structure, length, and flow)\n"
-        "2. Only SWAP individual words — one word for one word. NEVER replace one word with multiple words\n"
-        "3. For names: if Version B has a name that matches protected terms or vocabulary, use it\n"
-        "4. For tech terms: if Version B matches known vocabulary better, use it\n"
-        "5. For common words: keep Version A unless Version B is clearly better\n"
-        "6. NEVER add or remove words. The output must have the same word count as Version A\n"
-        "7. NEVER change sentence structure or word order\n"
-        "8. Each swap must be exactly ONE word → ONE word\n\n"
+        "2. Pick the best word from EITHER version, OR from the vocabulary list\n"
+        "3. If a word in the text sounds like a vocabulary term but is misspelled, "
+        "replace it with the correct vocabulary spelling "
+        "(e.g. 'OpenDI'→'OpenAI', 'Cloudware'→'Cloudflare', 'GROC'→'Groq')\n"
+        "4. This applies even if BOTH versions have the same wrong word\n"
+        "5. For protected terms: NEVER change these spellings\n"
+        "6. Each swap must be exactly ONE word → ONE word\n"
+        "7. NEVER add or remove words. Same word count as Version A\n"
+        "8. NEVER change sentence structure or word order\n\n"
         'Respond with JSON:\n'
-        '{"text": "the final best version based on Version A with word swaps from B", '
-        '"swaps": ["wordA → wordB", ...]}\n'
-        'If no swaps needed: {"text": "copy of version A unchanged", "swaps": []}'
+        '{"text": "the corrected version", "swaps": ["wrong → correct", ...]}\n'
+        'If no corrections needed: {"text": "copy of version A unchanged", "swaps": []}'
     )
 
 
@@ -93,8 +94,8 @@ def _parse_response(response: str, original_text: str) -> dict:
                         old = parts[0].strip().strip("'\"")
                         new = parts[1].strip().strip("'\"")
                         if old.lower() != new.lower() and old and new:
-                            # Filter phrase swaps: reject if either side has multiple words
-                            if len(old.split()) > 2 or len(new.split()) > 2:
+                            # Strict: only 1 word → 1 word swaps
+                            if len(old.split()) > 1 or len(new.split()) > 1:
                                 continue
                             real_swaps.append(f"{old} → {new}")
 
@@ -161,10 +162,28 @@ def reconcile_segments(
             if original_text.lower() == whisper_text.lower():
                 continue
 
-            # Find the portion of Whisper text that corresponds to this segment
-            # (Whisper may cover multiple segments in one chunk)
-            # Use the segment's original text length as a rough guide
-            whisper_portion = whisper_text  # Use full Whisper output for context
+            # Extract the relevant portion of Whisper text for this segment
+            # Instead of sending the full 80s chunk, find the ~matching section
+            # Use word count ratio to estimate position in the Whisper text
+            whisper_portion = whisper_text
+            orig_word_count = len(original_text.split())
+            whisper_word_count = len(whisper_text.split())
+            if whisper_word_count > orig_word_count * 3:
+                # Whisper text is much longer — try to find the matching portion
+                # Use fuzzy matching to find where this segment starts in Whisper text
+                orig_words = original_text.lower().split()[:5]  # first 5 words
+                whisper_words = whisper_text.lower().split()
+                best_pos = 0
+                best_score = 0
+                for pos in range(len(whisper_words) - 3):
+                    score = sum(1 for w in orig_words if w in whisper_words[pos:pos+10])
+                    if score > best_score:
+                        best_score = score
+                        best_pos = pos
+                # Extract portion with some padding
+                start = max(0, best_pos - 3)
+                end = min(len(whisper_words), start + orig_word_count + 10)
+                whisper_portion = " ".join(whisper_words[start:end])
 
             # Build and run reconciliation prompt
             prompt = _build_reconciliation_prompt(
@@ -186,6 +205,42 @@ def reconcile_segments(
             if not swaps:
                 continue
 
+            # ── Layer 2: Vocab-only filter ──
+            # Only keep swaps where the NEW word matches a known vocab term,
+            # OCR term, or protected term. Reject random word swaps.
+            all_known = set()
+            for t in (vocab_terms or []):
+                all_known.add(t.lower())
+            for t in (protected_terms or []):
+                all_known.add(t.lower())
+            for h in (ocr_hints or []):
+                for w in h.split():
+                    if len(w) > 2 and w[0].isupper():
+                        all_known.add(w.lower())
+
+            vocab_swaps = []
+            for swap_str in swaps:
+                if "→" not in swap_str:
+                    continue
+                parts = swap_str.split("→")
+                old_word = parts[0].strip().strip("'\"").lower()
+                new_word = parts[1].strip().strip("'\"").lower()
+
+                # Keep if EITHER old or new word relates to a known vocab/OCR term
+                # This catches: GROC→Groq (Groq in vocab), OpenDI→OpenAI (OpenAI in vocab)
+                # But blocks: speaker→What (neither in vocab), Cache→Cash (neither)
+                old_matches = old_word in all_known or any(old_word in k for k in all_known if len(k) > 3)
+                new_matches = new_word in all_known or any(new_word in k for k in all_known if len(k) > 3)
+
+                if old_matches or new_matches:
+                    vocab_swaps.append(swap_str)
+                else:
+                    logger.info("    Filtered: %s (neither word in vocab)", swap_str)
+
+            if not vocab_swaps:
+                continue
+            swaps = vocab_swaps
+
             # Sanity check: reconciled text shouldn't be drastically different in length
             orig_words = len(original_text.split())
             recon_words = len(reconciled_text.split())
@@ -193,6 +248,21 @@ def reconcile_segments(
                 logger.warning("  [%.1f-%.1fs] skipped — word count mismatch (orig=%d, recon=%d)",
                                seg_start, seg_end, orig_words, recon_words)
                 continue
+
+            # ── Layer 3: Protected terms post-check ──
+            # If any protected term was in original but missing from reconciled, revert
+            if protected_terms:
+                orig_lower = original_text.lower()
+                recon_lower = reconciled_text.lower()
+                removed_term = None
+                for term in protected_terms:
+                    if term.lower() in orig_lower and term.lower() not in recon_lower:
+                        removed_term = term
+                        break
+                if removed_term:
+                    logger.warning("  [%.1f-%.1fs] skipped — protected term '%s' was removed",
+                                   seg_start, seg_end, removed_term)
+                    continue
 
             # Apply: directly replace the segment text
             enhanced_segments[i]["text"] = reconciled_text

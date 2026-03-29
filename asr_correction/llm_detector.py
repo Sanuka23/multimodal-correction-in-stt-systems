@@ -86,10 +86,9 @@ def _build_detection_prompt(
     prompt += (
         "Find words that are clearly wrong — misspelled names, garbled technical terms, "
         "words that don't fit the context. Do NOT flag words that are correct.\n\n"
-        "For each suspect, also indicate if you need to see the screen/slides to confirm "
-        "(needs_ocr=true for names, UI text, or ambiguous terms; false for obvious audio errors).\n\n"
-        'Respond with JSON: {"suspects": [{"word": "wrong_word", "likely_correct": "correct_word", "needs_ocr": false}, ...], "confidence": 0.9}\n'
-        'If no errors: {"suspects": [], "confidence": 0.99}'
+        "IMPORTANT: Respond with compact single-line JSON. No newlines or indentation inside the JSON.\n"
+        'Format: {"suspects":[{"word":"x","likely_correct":"y"},...],"confidence":0.9}\n'
+        'If no errors: {"suspects":[],"confidence":0.99}'
     )
     return prompt
 
