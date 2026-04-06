@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard'
 import Compare from './pages/Compare'
 import Jobs from './pages/Jobs'
 import Training from './pages/Training'
+import TrainingData from './pages/TrainingData'
 import PipelineControl from './pages/PipelineControl'
 import Pipeline from './pages/Pipeline'
 import Eval from './pages/Eval'
@@ -17,6 +18,7 @@ export default function App() {
           <Route path="compare" element={<Compare />} />
           <Route path="jobs" element={<Jobs />} />
           <Route path="training" element={<Training />} />
+          <Route path="training-data" element={<TrainingData />} />
           <Route path="pipeline-control" element={<PipelineControl />} />
           <Route path="pipeline/:jobId" element={<Pipeline />} />
           <Route path="eval" element={<Eval />} />
