@@ -76,13 +76,6 @@
       "known_errors": []
     },
     {
-      "term": "Arisa",
-      "category": "person_name",
-      "known_errors": [
-        "Arissa"
-      ]
-    },
-    {
       "term": "Arissa",
       "category": "person_name",
       "known_errors": [
@@ -104,10 +97,10 @@
       "known_errors": []
     },
     {
-      "term": "Arvindi",
+      "term": "Avindi",
       "category": "person_name",
       "known_errors": [
-        "Avindi",
+        "Arvindi",
         "Avindy",
         "Wendy",
         "Nimmi"
@@ -232,6 +225,14 @@
       "known_errors": [
         "Column",
         "Calum"
+      ]
+    },
+    {
+      "term": "cache",
+      "category": "tech_term",
+      "known_errors": [
+        "cash",
+        "Cash"
       ]
     },
     {
@@ -380,6 +381,15 @@
       "category": "person_name",
       "known_errors": [
         "Delusion"
+      ]
+    },
+    {
+      "term": "Dinuka",
+      "category": "person_name",
+      "known_errors": [
+        "Jinuka",
+        "Denuka",
+        "Denoraka"
       ]
     },
     {
@@ -887,6 +897,15 @@
       ]
     },
     {
+      "term": "Qwen",
+      "category": "ai_model",
+      "known_errors": [
+        "QME",
+        "Quenn",
+        "Quinn"
+      ]
+    },
+    {
       "term": "RAG",
       "category": "tech_term",
       "known_errors": [
@@ -1175,12 +1194,14 @@
       ]
     },
     {
-      "term": "Vicky",
+      "term": "Wicky",
       "category": "person_name",
       "known_errors": [
         "Wiki",
-        "Wicky",
-        "Riki"
+        "Vicky",
+        "Riki",
+        "Viki",
+        "Uki"
       ]
     },
     {

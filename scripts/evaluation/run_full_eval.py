@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 
 # Add project root to path
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from evaluation.wer import WERCalculator
@@ -59,26 +59,22 @@ def normalize_text(text: str) -> str:
 
 
 def run_correction(transcript: dict, video_path: str = None,
-                   use_avsr: bool = True, dry_run: bool = False,
+                   use_avsr: bool = False, dry_run: bool = False,
                    skip_ocr: bool = False) -> tuple:
-    """Run the full correction pipeline on one transcript."""
+    """Run the v2 correction pipeline on one transcript."""
     from asr_correction import correct_transcript
-    from asr_correction.avsr import get_avsr_provider
 
     config = CorrectionConfig(dry_run=dry_run)
-    avsr_mode = config.avsr_mode if use_avsr else "none"
-    avsr_provider = get_avsr_provider(avsr_mode) if use_avsr and not dry_run else None
 
-    # For eval, optionally skip OCR (very slow on long videos)
-    video_for_ocr = None if skip_ocr else video_path
+    # Video URL for OCR + Whisper Pass 2
+    video_url = None if skip_ocr else video_path
 
     t0 = time.perf_counter()
     enhanced, report = correct_transcript(
         transcript=transcript,
         file_id="eval",
         custom_vocabulary=[],
-        avsr_provider=avsr_provider,
-        video_url=video_for_ocr if use_avsr else None,
+        video_url=video_url,
         config=config,
     )
     elapsed_ms = (time.perf_counter() - t0) * 1000
