@@ -29,14 +29,14 @@ class CorrectionConfig:
     context_window_chars: int = 80
     min_context_length: int = 10
 
-    # Quick OCR (Step 3 — extract frames from video for screen text)
-    quick_ocr_num_frames: int = 10
+    # Smart OCR (Step 3 — targeted frames at error timestamps + evenly-spaced)
+    quick_ocr_num_frames: int = 15
 
     # Whisper Pass 2 (Step 4 — re-transcribe flagged segments)
     whisper_model_size: str = "small"  # "tiny", "base", "small", "medium"
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
-    whisper_max_segments: int = 20
+    whisper_max_segments: int = 40
     whisper_segment_padding_s: float = 2.0
 
     # Data collection
