@@ -1,8 +1,44 @@
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;700;800&family=Inter:wght@400;500;600&family=Space+Grotesk:wght@400;500;700&display=swap');
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@theme {
+  --color-outline: #909097;
+  --color-secondary: #4edea3;
+  --color-inverse-on-surface: #283044;
+  --color-on-error: #690005;
+  --color-inverse-surface: #dae2fd;
+  --color-on-primary: #00354a;
+  --color-surface-container-low: #131b2e;
+  --color-on-secondary: #003824;
+  --color-surface-variant: #2d3449;
+  --color-background: #0b1326;
+  --color-primary-container: #001a27;
+  --color-surface-container-highest: #2d3449;
+  --color-tertiary-container: #251400;
+  --color-error-container: #93000a;
+  --color-primary: #7bd0ff;
+  --color-inverse-primary: #00668a;
+  --color-surface-container-lowest: #060e20;
+  --color-on-background: #dae2fd;
+  --color-on-surface-variant: #c6c6cd;
+  --color-on-surface: #dae2fd;
+  --color-outline-variant: #45464d;
+  --color-on-tertiary: #472a00;
+  --color-surface: #0b1326;
+  --color-on-error-container: #ffdad6;
+  --color-surface-bright: #31394d;
+  --color-surface-container-high: #222a3d;
+  --color-surface-container: #171f33;
+  --color-tertiary: #ffb95f;
+  --color-surface-tint: #7bd0ff;
+  --color-secondary-container: #00a572;
+  --color-error: #ffb4ab;
+
+  --font-headline: 'Manrope', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --font-label: 'Space Grotesk', sans-serif;
+}
 
 html { background-color: #0b1326; }
 body { font-family: 'Inter', sans-serif; color: #dae2fd; margin: 0; }
