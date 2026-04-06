@@ -1,10 +1,11 @@
-"""ScreenApp ASR Correction Module.
+"""ScreenApp ASR Correction Module (v2 — Whisper Reconciliation).
 
-Two-stage selective correction pipeline:
-1. Segment Selector — analyzes transcript + vocab to identify which segments
-   need fixing and which modality (OCR/AVSR) each needs.
-2. Targeted Correction — only fetches OCR/runs AVSR on flagged segments,
-   then corrects with the fine-tuned model.
+Pipeline:
+1. LLM Detection — identify ASR errors using Qwen3.5-9B
+2. Topic Classification + Web Vocab Enrichment
+3. Quick OCR — extract screen text from video frames
+4. Whisper Pass 2 — re-transcribe flagged segments with vocab hints
+5. LLM Reconciliation — compare original vs Whisper, pick best words
 
 Usage:
     from asr_correction import correct_transcript
@@ -22,11 +23,10 @@ import time
 
 from .config import CorrectionConfig
 from .data_collector import collect_correction_data
-from .segment_selector import select_segments
 from .types import CorrectionReport
 from .vocabulary import load_domain_vocab, merge_vocabularies
 
-__version__ = "4.0.0"  # Whisper reconciliation pipeline
+__version__ = "4.1.0"  # Whisper reconciliation pipeline + cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -126,26 +126,35 @@ def correct_transcript(
     # Step 2.6: Web vocab enrichment (search web using description, extract vocab with Qwen)
     web_vocab = _enrich_vocab_from_web(topic_info, model, tokenizer)
 
-    # Step 3: Quick OCR — grab ~10 evenly spaced frames, OCR them for screen text
+    # Step 3: Smart OCR — targeted frames at error timestamps + evenly-spaced fallback
     targeted_ocr_provider = ocr_provider
     quick_ocr_hints = []
 
     if not ocr_provider and video_url and not config.dry_run:
         try:
-            from .video_frames import extract_frames_periodic, get_video_duration
+            from .video_frames import extract_frames_periodic, extract_frames_at_timestamps, get_video_duration
             from .ocr_extractor import _ocr_single_frame
 
             t3 = time.time()
             num_frames = config.quick_ocr_num_frames
             duration = get_video_duration(video_url)
             if duration and duration > 0:
-                interval = max(duration / num_frames, 5.0)
-                logger.info("Step 3: Quick OCR — extracting %d frames (every %.0fs from %.0fs video)",
-                            num_frames, interval, duration)
+                # Compute smart timestamps from flagged segments
+                ocr_timestamps = _compute_ocr_timestamps(analyses, duration, config)
 
-                frames = extract_frames_periodic(
-                    video_url, interval_s=interval, max_frames=num_frames,
-                )
+                if ocr_timestamps:
+                    n_targeted = sum(1 for a in analyses if getattr(a, 'needs_ocr', False))
+                    logger.info("Step 3: Smart OCR — %d frames (%d targeted from flagged segments + evenly-spaced)",
+                                len(ocr_timestamps), min(n_targeted, len(ocr_timestamps)))
+                    frames = extract_frames_at_timestamps(video_url, ocr_timestamps)
+                else:
+                    # No flagged segments — fall back to periodic extraction
+                    interval = max(duration / num_frames, 5.0)
+                    logger.info("Step 3: No flagged OCR segments — falling back to %d evenly-spaced frames",
+                                num_frames)
+                    frames = extract_frames_periodic(
+                        video_url, interval_s=interval, max_frames=num_frames,
+                    )
 
                 if frames:
                     seen = set()
@@ -243,6 +252,19 @@ def correct_transcript(
             term_names = [t["term"] for t in vocab_terms]
             # OCR-confirmed terms as protected ground truth
             protected_terms = [v["term"] for v in ocr_vocab]
+
+            # Build error candidate dicts for reconciler (from Step 2)
+            error_candidate_dicts = []
+            for c in candidates:
+                error_candidate_dicts.append({
+                    "error_found": c.error_found,
+                    "likely_correct": c.term,
+                    "category": c.category,
+                    "context": c.context,
+                    "timestamp_start": c.timestamp_start,
+                    "timestamp_end": c.timestamp_end,
+                })
+
             enhanced, all_changes = reconcile_segments(
                 original_transcript=transcript,
                 whisper_segments=whisper_segments,
@@ -252,6 +274,9 @@ def correct_transcript(
                 model=model,
                 tokenizer=tokenizer,
                 config=config,
+                error_candidates=error_candidate_dicts,
+                topic_info=topic_info,
+                web_vocab=web_vocab,
             )
         except Exception as e:
             logger.warning("Step 5: Reconciliation failed — %s", e)
@@ -692,6 +717,49 @@ def _classify_topic(transcript, vocab_terms, candidates, model, tokenizer):
     logger.info("=" * 60)
 
     return topic_info
+
+
+def _compute_ocr_timestamps(analyses, duration, config):
+    """Compute targeted OCR timestamps from flagged segments.
+
+    Strategy:
+    - Extract frame at midpoint of each segment with needs_ocr=True
+    - Add evenly-spaced frames to fill remaining budget
+    - Cap at config.quick_ocr_num_frames total
+    """
+    max_frames = config.quick_ocr_num_frames
+
+    # Targeted frames: midpoint of each needs_ocr segment
+    targeted_ts = []
+    for a in analyses:
+        if getattr(a, 'needs_ocr', False) and a.start < a.end:
+            midpoint = (a.start + a.end) / 2.0
+            targeted_ts.append(midpoint)
+
+    # Deduplicate timestamps that are very close (within 5s)
+    targeted_ts.sort()
+    deduped = []
+    for ts in targeted_ts:
+        if not deduped or ts - deduped[-1] > 5.0:
+            deduped.append(ts)
+    targeted_ts = deduped
+
+    # Reserve up to 2/3 of budget for targeted, rest for evenly-spaced
+    max_targeted = min(len(targeted_ts), int(max_frames * 0.67))
+    targeted_ts = targeted_ts[:max_targeted]
+
+    # Fill remaining slots with evenly-spaced frames
+    remaining = max_frames - len(targeted_ts)
+    if remaining > 0 and duration and duration > 0:
+        interval = duration / (remaining + 1)
+        for i in range(remaining):
+            ts = interval * (i + 1)
+            # Skip if too close to a targeted frame
+            if not any(abs(ts - t) < 5.0 for t in targeted_ts):
+                targeted_ts.append(ts)
+
+    targeted_ts.sort()
+    return targeted_ts[:max_frames]
 
 
 def _create_targeted_ocr_provider(ocr_hints_by_ts: dict):

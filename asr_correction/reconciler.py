@@ -1,8 +1,8 @@
-"""LLM Reconciliation — compare original vs Whisper transcription per segment.
+"""LLM Reconciliation — holistic correction using all gathered evidence.
 
-The LLM compares two transcriptions of the same audio and outputs the best
-combined version. It keeps the structure of the original but swaps in better
-words from the Whisper version where appropriate.
+The LLM receives two transcriptions of the same audio PLUS all evidence
+gathered by the pipeline (error candidates, topic info, OCR, web vocab)
+and produces the best corrected version.
 
 No regex replacement — the LLM outputs the final segment text directly.
 """
@@ -18,9 +18,9 @@ from typing import Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 RECONCILIATION_SYSTEM_PROMPT = (
-    "You are an ASR transcript reconciliation expert. You compare two transcriptions "
-    "of the same audio and produce the best combined version. You output the final "
-    "text directly — never add or remove content, only fix misheard words."
+    "You are an ASR transcript correction expert. You use multiple evidence sources "
+    "(two transcriptions, vocabulary, OCR screen text, detected errors) to produce "
+    "the best corrected version. Only fix misheard words — never add or remove content."
 )
 
 
@@ -30,9 +30,38 @@ def _build_reconciliation_prompt(
     vocab_terms: List[str],
     ocr_hints: List[str],
     protected_terms: List[str] = None,
+    error_candidates: List[dict] = None,
+    topic_info: dict = None,
+    web_vocab: List[dict] = None,
 ) -> str:
-    """Build prompt for comparing two transcriptions."""
-    vocab_str = json.dumps(vocab_terms) if vocab_terms else "[]"
+    """Build holistic correction prompt using all available evidence."""
+    # Merge domain + web vocab into one deduped list
+    all_vocab = list(vocab_terms or [])
+    if web_vocab:
+        for v in web_vocab:
+            term = v.get("term", "")
+            if term and term not in all_vocab:
+                all_vocab.append(term)
+    vocab_str = json.dumps(all_vocab[:80]) if all_vocab else "[]"
+
+    # Topic context (compact — 1 line)
+    topic_section = ""
+    if topic_info and topic_info.get("topic", "unknown") != "unknown":
+        topic_section = (
+            f"Meeting context: {topic_info.get('field', '')} — {topic_info.get('topic', '')}\n\n"
+        )
+
+    # Error candidates for this segment (from Step 2 detection)
+    candidates_section = ""
+    if error_candidates:
+        lines = []
+        for ec in error_candidates[:10]:
+            lines.append(f"  - '{ec['error_found']}' is likely '{ec['likely_correct']}' ({ec.get('category', '')})")
+        if lines:
+            candidates_section = (
+                "Suspected ASR errors detected in this segment:\n"
+                + "\n".join(lines) + "\n\n"
+            )
 
     ocr_section = ""
     if ocr_hints:
@@ -51,24 +80,27 @@ def _build_reconciliation_prompt(
         )
 
     return (
-        "You have two ASR transcriptions of the SAME audio segment and a vocabulary list. "
+        "You have two ASR transcriptions of the SAME audio segment, plus multiple evidence sources. "
         "Produce the best corrected version.\n\n"
+        f"{topic_section}"
         f"Version A (original): {original_text}\n\n"
         f"Version B (re-transcription): {whisper_text}\n\n"
-        f"Known vocabulary (correct spellings of domain terms): {vocab_str}\n\n"
+        f"Known vocabulary (correct spellings): {vocab_str}\n\n"
+        f"{candidates_section}"
         f"{protected_section}"
         f"{ocr_section}"
         "Rules:\n"
         "1. Start with Version A as the base text (keep its structure, length, and flow)\n"
         "2. Pick the best word from EITHER version, OR from the vocabulary list\n"
-        "3. If a word in the text sounds like a vocabulary term but is misspelled, "
-        "replace it with the correct vocabulary spelling "
+        "3. Use the suspected errors list as strong hints — if a word was flagged, "
+        "strongly consider the suggested correction\n"
+        "4. If a word sounds like a vocabulary term but is misspelled, replace it "
         "(e.g. 'OpenDI'→'OpenAI', 'Cloudware'→'Cloudflare', 'GROC'→'Groq')\n"
-        "4. This applies even if BOTH versions have the same wrong word\n"
-        "5. For protected terms: NEVER change these spellings\n"
-        "6. Each swap must be exactly ONE word → ONE word\n"
-        "7. NEVER add or remove words. Same word count as Version A\n"
-        "8. NEVER change sentence structure or word order\n\n"
+        "5. This applies even if BOTH versions have the same wrong word\n"
+        "6. For protected terms: NEVER change these spellings\n"
+        "7. Each swap must be exactly ONE word → ONE word\n"
+        "8. NEVER add or remove words. Same word count as Version A\n"
+        "9. NEVER change sentence structure or word order\n\n"
         'Respond with JSON:\n'
         '{"text": "the corrected version", "swaps": ["wrong → correct", ...]}\n'
         'If no corrections needed: {"text": "copy of version A unchanged", "swaps": []}'
@@ -117,8 +149,11 @@ def reconcile_segments(
     tokenizer,
     config,
     protected_terms: List[str] = None,
+    error_candidates: List[dict] = None,
+    topic_info: dict = None,
+    web_vocab: List[dict] = None,
 ) -> Tuple[dict, list]:
-    """Compare original vs Whisper transcription per segment, output best version.
+    """Holistic correction using all gathered evidence per segment.
 
     The LLM outputs the final segment text directly — no regex replacement.
     This prevents duplication bugs and phrase-level rewrites.
@@ -185,10 +220,22 @@ def reconcile_segments(
                 end = min(len(whisper_words), start + orig_word_count + 10)
                 whisper_portion = " ".join(whisper_words[start:end])
 
-            # Build and run reconciliation prompt
+            # Filter error candidates to this segment's time range
+            seg_candidates = None
+            if error_candidates:
+                seg_candidates = [
+                    ec for ec in error_candidates
+                    if (ec.get("timestamp_start", 0) <= seg_end and
+                        ec.get("timestamp_end", 0) >= seg_start)
+                ]
+
+            # Build and run reconciliation prompt with all evidence
             prompt = _build_reconciliation_prompt(
                 original_text, whisper_portion, vocab_terms, ocr_hints,
                 protected_terms=protected_terms,
+                error_candidates=seg_candidates if seg_candidates else None,
+                topic_info=topic_info,
+                web_vocab=web_vocab,
             )
 
             raw = run_inference_raw(
@@ -206,8 +253,8 @@ def reconcile_segments(
                 continue
 
             # ── Layer 2: Vocab-only filter ──
-            # Only keep swaps where the NEW word matches a known vocab term,
-            # OCR term, or protected term. Reject random word swaps.
+            # Only keep swaps where the word matches a known vocab term,
+            # OCR term, protected term, or a Step 2 error candidate.
             all_known = set()
             for t in (vocab_terms or []):
                 all_known.add(t.lower())
@@ -217,6 +264,24 @@ def reconcile_segments(
                 for w in h.split():
                     if len(w) > 2 and w[0].isupper():
                         all_known.add(w.lower())
+            # Include web vocab terms so web-sourced corrections pass the filter
+            if web_vocab:
+                for v in web_vocab:
+                    term = v.get("term", "")
+                    if term:
+                        all_known.add(term.lower())
+
+            # Build set of trusted swaps from Step 2 error candidates
+            # The detector already validated these — trust them
+            candidate_swaps = set()
+            if seg_candidates:
+                for ec in seg_candidates:
+                    err = ec.get("error_found", "").lower().strip()
+                    fix = ec.get("likely_correct", "").lower().strip()
+                    if err and fix:
+                        candidate_swaps.add((err, fix))
+                        # Also add the correction target to all_known
+                        all_known.add(fix)
 
             vocab_swaps = []
             for swap_str in swaps:
@@ -226,16 +291,19 @@ def reconcile_segments(
                 old_word = parts[0].strip().strip("'\"").lower()
                 new_word = parts[1].strip().strip("'\"").lower()
 
-                # Keep if EITHER old or new word relates to a known vocab/OCR term
-                # This catches: GROC→Groq (Groq in vocab), OpenDI→OpenAI (OpenAI in vocab)
-                # But blocks: speaker→What (neither in vocab), Cache→Cash (neither)
+                # Check 1: Does this swap match a Step 2 error candidate?
+                if (old_word, new_word) in candidate_swaps:
+                    vocab_swaps.append(swap_str)
+                    continue
+
+                # Check 2: Does EITHER old or new word relate to a known vocab/OCR term?
                 old_matches = old_word in all_known or any(old_word in k for k in all_known if len(k) > 3)
                 new_matches = new_word in all_known or any(new_word in k for k in all_known if len(k) > 3)
 
                 if old_matches or new_matches:
                     vocab_swaps.append(swap_str)
                 else:
-                    logger.info("    Filtered: %s (neither word in vocab)", swap_str)
+                    logger.info("    Filtered: %s (neither word in vocab/candidates)", swap_str)
 
             if not vocab_swaps:
                 continue
