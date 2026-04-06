@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Filter,
   Trash2,
@@ -397,23 +398,23 @@ export default function Jobs() {
                       ) : status === 'failed' ? (
                         <p className="text-xs text-error/80 flex items-center gap-1">
                           <AlertCircle size={14} />
-                          {job.result_summary || 'Process exited with an error'}
+                          {typeof job.result_summary === 'string' ? job.result_summary : 'Process exited with an error'}
                         </p>
                       ) : (
                         <p className="text-xs text-slate-400 line-clamp-1">
-                          {job.result_summary || '\u2014'}
+                          {typeof job.result_summary === 'string' ? job.result_summary : job.result_summary ? JSON.stringify(job.result_summary) : '\u2014'}
                         </p>
                       )}
                     </td>
 
                     {/* Pipeline Link */}
                     <td className="px-6 py-5 text-right">
-                      <a
-                        href="#"
+                      <Link
+                        to={`/pipeline/${job._id}`}
                         className="text-primary hover:underline text-xs font-label tracking-tight"
                       >
                         {PIPELINE_LABEL[status] || 'VIEW_FLOW'}
-                      </a>
+                      </Link>
                     </td>
                   </tr>
                 )
