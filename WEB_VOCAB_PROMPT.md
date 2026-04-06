@@ -290,7 +290,7 @@ MEETING_TOPICS = {
         "field": "SaaS / Customer Support",
         "topic": "ASR troubleshooting, accent support, transcript quality",
         "description": "Troubleshooting call with Dimiter: inconsistent ScreenApp transcripts, Bulgarian accent recognition, Growth plan features.",
-        "known_terms": ["ScreenApp", "Dimitar", "Bulgarian", "transcript", "summary", "Growth plan", "Arisa", "monitoring evaluation"],
+        "known_terms": ["ScreenApp", "Dimitar", "Bulgarian", "transcript", "summary", "Growth plan", "Arissa", "monitoring evaluation"],
     },
     "compliance_discussion": {
         "field": "SaaS / Compliance and Security",
@@ -308,7 +308,7 @@ MEETING_TOPICS = {
         "field": "SaaS / Business Operations",
         "topic": "Product analytics, churn management, mobile development",
         "description": "Onboarding: PostHog, ChartMogul, Churnkey, MRR, Stripe, Flutter, sprint planning, SSO, API, SEO, Google Chat, Front.",
-        "known_terms": ["PostHog", "ChartMogul", "Churnkey", "Stripe", "Flutter", "MRR", "SSO", "SEO", "Google Chat", "Front", "ScreenApp", "Arvindi", "Callum"],
+        "known_terms": ["PostHog", "ChartMogul", "Churnkey", "Stripe", "Flutter", "MRR", "SSO", "SEO", "Google Chat", "Front", "ScreenApp", "Avindi", "Callum"],
     },
     "project_update": {
         "field": "AI/ML / Software Development",
