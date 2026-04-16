@@ -455,6 +455,317 @@ export default function Eval() {
           </div>
         </section>
       )}
+
+      {/* ── AMI Meeting Corpus Baseline ── */}
+      {data?.ami_baseline && data.ami_baseline.length > 0 && (
+        <section className="mb-12">
+          <h3 className="text-xs font-label uppercase tracking-widest text-on-surface-variant mb-4">
+            AMI Meeting Corpus — ScreenApp Baseline WER
+          </h3>
+
+          {/* Summary cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div className="flux-card rounded-xl p-4">
+              <p className="text-[10px] text-on-surface-variant font-label uppercase mb-1">Meetings</p>
+              <p className="text-2xl font-headline font-bold text-on-surface">{data.ami_baseline.length}</p>
+            </div>
+            <div className="flux-card rounded-xl p-4">
+              <p className="text-[10px] text-on-surface-variant font-label uppercase mb-1">Avg Baseline WER</p>
+              <p className="text-2xl font-headline font-bold text-error">
+                {fmt(data.ami_baseline.reduce((s, r) => s + r.baseline_wer, 0) / data.ami_baseline.length)}%
+              </p>
+            </div>
+            <div className="flux-card rounded-xl p-4">
+              <p className="text-[10px] text-on-surface-variant font-label uppercase mb-1">Total GT Words</p>
+              <p className="text-2xl font-headline font-bold text-on-surface">
+                {data.ami_baseline.reduce((s, r) => s + r.gt_words, 0).toLocaleString()}
+              </p>
+            </div>
+            <div className="flux-card rounded-xl p-4">
+              <p className="text-[10px] text-on-surface-variant font-label uppercase mb-1">Worst Meeting</p>
+              <p className="text-2xl font-headline font-bold text-error">
+                {fmt(Math.max(...data.ami_baseline.map(r => r.baseline_wer)))}%
+              </p>
+            </div>
+          </div>
+
+          {/* Bar chart */}
+          <div className="flux-card rounded-xl p-6 mb-6">
+            <h4 className="font-label text-[10px] uppercase tracking-widest text-on-surface-variant mb-4">
+              Baseline WER by Meeting
+            </h4>
+            <div style={{ width: '100%', height: 300 }}>
+              <ResponsiveContainer>
+                <BarChart data={data.ami_baseline} layout="vertical" margin={{ left: 60, right: 20, top: 5, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#45464d" horizontal={false} />
+                  <XAxis type="number" domain={[0, 'auto']} tick={{ fill: '#c6c6cd', fontSize: 11 }} unit="%" />
+                  <YAxis type="category" dataKey="meeting_id" tick={{ fill: '#c6c6cd', fontSize: 11 }} width={70} />
+                  <Tooltip {...CHART_TOOLTIP_STYLE} formatter={(v) => [`${fmt(v)}%`, 'WER']} />
+                  <Bar dataKey="baseline_wer" fill="#ffb4ab" radius={[0, 4, 4, 0]} barSize={20} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Table */}
+          <div className="flux-card rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-outline-variant/10 text-[10px] text-on-surface-variant font-label uppercase tracking-widest">
+                  <th className="text-left px-5 py-3">Meeting</th>
+                  <th className="text-left px-5 py-3">Accent</th>
+                  <th className="text-right px-5 py-3">GT Words</th>
+                  <th className="text-right px-5 py-3">SA Words</th>
+                  <th className="text-right px-5 py-3">Baseline WER</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.ami_baseline.map((r) => (
+                  <tr key={r.meeting_id} className="border-b border-outline-variant/5 hover:bg-surface-container/50">
+                    <td className="px-5 py-3 font-mono text-on-surface">{r.meeting_id}</td>
+                    <td className="px-5 py-3 text-on-surface-variant">{r.accent}</td>
+                    <td className="px-5 py-3 text-right font-mono text-on-surface">{r.gt_words.toLocaleString()}</td>
+                    <td className="px-5 py-3 text-right font-mono text-on-surface">{r.sa_words.toLocaleString()}</td>
+                    <td className="px-5 py-3 text-right font-mono font-bold text-error">{fmt(r.baseline_wer)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* ── Earnings-22 Baseline ── */}
+      {data?.earnings_baseline && data.earnings_baseline.length > 0 && (
+        <section className="mb-12">
+          <h3 className="text-xs font-label uppercase tracking-widest text-on-surface-variant mb-4">
+            Earnings-22 — Human-Verified Baseline WER
+          </h3>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div className="flux-card rounded-xl p-4">
+              <p className="text-[10px] text-on-surface-variant font-label uppercase mb-1">Calls</p>
+              <p className="text-2xl font-headline font-bold text-on-surface">{data.earnings_baseline.length}</p>
+            </div>
+            <div className="flux-card rounded-xl p-4">
+              <p className="text-[10px] text-on-surface-variant font-label uppercase mb-1">Avg Baseline WER</p>
+              <p className="text-2xl font-headline font-bold text-error">
+                {fmt(data.earnings_baseline.reduce((s, r) => s + r.baseline_wer, 0) / data.earnings_baseline.length)}%
+              </p>
+            </div>
+            <div className="flux-card rounded-xl p-4">
+              <p className="text-[10px] text-on-surface-variant font-label uppercase mb-1">Total GT Words</p>
+              <p className="text-2xl font-headline font-bold text-on-surface">
+                {data.earnings_baseline.reduce((s, r) => s + r.gt_words, 0).toLocaleString()}
+              </p>
+            </div>
+            <div className="flux-card rounded-xl p-4">
+              <p className="text-[10px] text-on-surface-variant font-label uppercase mb-1">Worst Call</p>
+              <p className="text-2xl font-headline font-bold text-error">
+                {fmt(Math.max(...data.earnings_baseline.map(r => r.baseline_wer)))}%
+              </p>
+            </div>
+          </div>
+
+          <div className="flux-card rounded-xl p-6 mb-6">
+            <h4 className="font-label text-[10px] uppercase tracking-widest text-on-surface-variant mb-4">
+              Baseline WER by Call (Accent)
+            </h4>
+            <div style={{ width: '100%', height: 220 }}>
+              <ResponsiveContainer>
+                <BarChart data={data.earnings_baseline} layout="vertical" margin={{ left: 80, right: 20, top: 5, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#45464d" horizontal={false} />
+                  <XAxis type="number" domain={[0, 'auto']} tick={{ fill: '#c6c6cd', fontSize: 11 }} unit="%" />
+                  <YAxis type="category" dataKey={(r) => `${r.meeting_id} (${r.accent})`} tick={{ fill: '#c6c6cd', fontSize: 11 }} width={150} />
+                  <Tooltip {...CHART_TOOLTIP_STYLE} formatter={(v) => [`${fmt(v)}%`, 'WER']} />
+                  <Bar dataKey="baseline_wer" fill="#ffb95f" radius={[0, 4, 4, 0]} barSize={20} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="flux-card rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-outline-variant/10 text-[10px] text-on-surface-variant font-label uppercase tracking-widest">
+                  <th className="text-left px-5 py-3">File ID</th>
+                  <th className="text-left px-5 py-3">Accent</th>
+                  <th className="text-left px-5 py-3">Country</th>
+                  <th className="text-right px-5 py-3">GT Words</th>
+                  <th className="text-right px-5 py-3">SA Words</th>
+                  <th className="text-right px-5 py-3">Baseline WER</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.earnings_baseline.map((r) => (
+                  <tr key={r.meeting_id} className="border-b border-outline-variant/5 hover:bg-surface-container/50">
+                    <td className="px-5 py-3 font-mono text-on-surface">{r.meeting_id}</td>
+                    <td className="px-5 py-3 text-on-surface-variant">{r.accent}</td>
+                    <td className="px-5 py-3 text-on-surface-variant">{r.country}</td>
+                    <td className="px-5 py-3 text-right font-mono text-on-surface">{r.gt_words.toLocaleString()}</td>
+                    <td className="px-5 py-3 text-right font-mono text-on-surface">{r.sa_words.toLocaleString()}</td>
+                    <td className="px-5 py-3 text-right font-mono font-bold text-error">{fmt(r.baseline_wer)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* ── AMI v2 Baseline ── */}
+      {data?.ami_v2_baseline && data.ami_v2_baseline.length > 0 && (
+        <section className="mb-12">
+          <h3 className="text-xs font-label uppercase tracking-widest text-on-surface-variant mb-4">
+            AMI v2 — Proper Corpus (Edinburgh Scenario) Baseline WER
+          </h3>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div className="flux-card rounded-xl p-4">
+              <p className="text-[10px] text-on-surface-variant font-label uppercase mb-1">Meetings</p>
+              <p className="text-2xl font-headline font-bold text-on-surface">{data.ami_v2_baseline.length}</p>
+            </div>
+            <div className="flux-card rounded-xl p-4">
+              <p className="text-[10px] text-on-surface-variant font-label uppercase mb-1">Avg Baseline WER</p>
+              <p className="text-2xl font-headline font-bold text-error">
+                {fmt(data.ami_v2_baseline.reduce((s, r) => s + r.baseline_wer, 0) / data.ami_v2_baseline.length)}%
+              </p>
+            </div>
+            <div className="flux-card rounded-xl p-4">
+              <p className="text-[10px] text-on-surface-variant font-label uppercase mb-1">Total GT Words</p>
+              <p className="text-2xl font-headline font-bold text-on-surface">
+                {data.ami_v2_baseline.reduce((s, r) => s + r.gt_words, 0).toLocaleString()}
+              </p>
+            </div>
+            <div className="flux-card rounded-xl p-4">
+              <p className="text-[10px] text-on-surface-variant font-label uppercase mb-1">Worst Meeting</p>
+              <p className="text-2xl font-headline font-bold text-error">
+                {fmt(Math.max(...data.ami_v2_baseline.map(r => r.baseline_wer)))}%
+              </p>
+            </div>
+          </div>
+
+          <div className="flux-card rounded-xl p-6 mb-6">
+            <h4 className="font-label text-[10px] uppercase tracking-widest text-on-surface-variant mb-4">
+              Baseline WER by Meeting
+            </h4>
+            <div style={{ width: '100%', height: 260 }}>
+              <ResponsiveContainer>
+                <BarChart data={data.ami_v2_baseline} layout="vertical" margin={{ left: 80, right: 20, top: 5, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#45464d" horizontal={false} />
+                  <XAxis type="number" domain={[0, 'auto']} tick={{ fill: '#c6c6cd', fontSize: 11 }} unit="%" />
+                  <YAxis type="category" dataKey="meeting_id" tick={{ fill: '#c6c6cd', fontSize: 11 }} width={120} />
+                  <Tooltip {...CHART_TOOLTIP_STYLE} formatter={(v) => [`${fmt(v)}%`, 'WER']} />
+                  <Bar dataKey="baseline_wer" fill="#4ade80" radius={[0, 4, 4, 0]} barSize={18} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="flux-card rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-outline-variant/10 text-[10px] text-on-surface-variant font-label uppercase tracking-widest">
+                  <th className="text-left px-5 py-3">Meeting</th>
+                  <th className="text-right px-5 py-3">GT Words</th>
+                  <th className="text-right px-5 py-3">SA Words</th>
+                  <th className="text-right px-5 py-3">Baseline WER</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.ami_v2_baseline
+                  .slice()
+                  .sort((a, b) => b.baseline_wer - a.baseline_wer)
+                  .map((r) => (
+                    <tr key={r.meeting_id} className="border-b border-outline-variant/5 hover:bg-surface-container/50">
+                      <td className="px-5 py-3 font-mono text-on-surface">{r.meeting_id}</td>
+                      <td className="px-5 py-3 text-right font-mono text-on-surface">{r.gt_words.toLocaleString()}</td>
+                      <td className="px-5 py-3 text-right font-mono text-on-surface">{r.sa_words.toLocaleString()}</td>
+                      <td className="px-5 py-3 text-right font-mono font-bold text-error">{fmt(r.baseline_wer)}%</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* ── SlideAVSR Baseline ── */}
+      {data?.slideavsr_baseline && data.slideavsr_baseline.length > 0 && (
+        <section className="mb-12">
+          <h3 className="text-xs font-label uppercase tracking-widest text-on-surface-variant mb-4">
+            SlideAVSR — Research Paper Presentations Baseline WER
+          </h3>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div className="flux-card rounded-xl p-4">
+              <p className="text-[10px] text-on-surface-variant font-label uppercase mb-1">Videos</p>
+              <p className="text-2xl font-headline font-bold text-on-surface">{data.slideavsr_baseline.length}</p>
+            </div>
+            <div className="flux-card rounded-xl p-4">
+              <p className="text-[10px] text-on-surface-variant font-label uppercase mb-1">Avg Baseline WER</p>
+              <p className="text-2xl font-headline font-bold text-error">
+                {fmt(data.slideavsr_baseline.reduce((s, r) => s + r.baseline_wer, 0) / data.slideavsr_baseline.length)}%
+              </p>
+            </div>
+            <div className="flux-card rounded-xl p-4">
+              <p className="text-[10px] text-on-surface-variant font-label uppercase mb-1">Total GT Words</p>
+              <p className="text-2xl font-headline font-bold text-on-surface">
+                {data.slideavsr_baseline.reduce((s, r) => s + r.gt_words, 0).toLocaleString()}
+              </p>
+            </div>
+            <div className="flux-card rounded-xl p-4">
+              <p className="text-[10px] text-on-surface-variant font-label uppercase mb-1">Worst Video</p>
+              <p className="text-2xl font-headline font-bold text-error">
+                {fmt(Math.max(...data.slideavsr_baseline.map(r => r.baseline_wer)))}%
+              </p>
+            </div>
+          </div>
+
+          <div className="flux-card rounded-xl p-6 mb-6">
+            <h4 className="font-label text-[10px] uppercase tracking-widest text-on-surface-variant mb-4">
+              Baseline WER by Video
+            </h4>
+            <div style={{ width: '100%', height: 260 }}>
+              <ResponsiveContainer>
+                <BarChart data={data.slideavsr_baseline} layout="vertical" margin={{ left: 80, right: 20, top: 5, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#45464d" horizontal={false} />
+                  <XAxis type="number" domain={[0, 'auto']} tick={{ fill: '#c6c6cd', fontSize: 11 }} unit="%" />
+                  <YAxis type="category" dataKey="file_id" tick={{ fill: '#c6c6cd', fontSize: 11 }} width={150} />
+                  <Tooltip {...CHART_TOOLTIP_STYLE} formatter={(v) => [`${fmt(v)}%`, 'WER']} />
+                  <Bar dataKey="baseline_wer" fill="#a78bfa" radius={[0, 4, 4, 0]} barSize={18} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="flux-card rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-outline-variant/10 text-[10px] text-on-surface-variant font-label uppercase tracking-widest">
+                  <th className="text-left px-5 py-3">File ID</th>
+                  <th className="text-right px-5 py-3">GT Words</th>
+                  <th className="text-right px-5 py-3">SA Words</th>
+                  <th className="text-right px-5 py-3">Baseline WER</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.slideavsr_baseline
+                  .slice()
+                  .sort((a, b) => b.baseline_wer - a.baseline_wer)
+                  .map((r) => (
+                    <tr key={r.file_id} className="border-b border-outline-variant/5 hover:bg-surface-container/50">
+                      <td className="px-5 py-3 font-mono text-on-surface">{r.file_id}</td>
+                      <td className="px-5 py-3 text-right font-mono text-on-surface">{r.gt_words.toLocaleString()}</td>
+                      <td className="px-5 py-3 text-right font-mono text-on-surface">{r.sa_words.toLocaleString()}</td>
+                      <td className="px-5 py-3 text-right font-mono font-bold text-error">{fmt(r.baseline_wer)}%</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
     </div>
   )
 }

@@ -256,20 +256,32 @@ def reconcile_segments(
             # Only keep swaps where the word matches a known vocab term,
             # OCR term, protected term, or a Step 2 error candidate.
             all_known = set()
+
+            def _add_known(term: str):
+                """Add a term plus its hyphen-stripped variant to all_known."""
+                t = term.lower().strip()
+                if t:
+                    all_known.add(t)
+                    # Also store dehyphenated form so that "Post-Hog" matches
+                    # "posthog" and vice versa.
+                    dehyph = t.replace("-", "")
+                    if dehyph != t:
+                        all_known.add(dehyph)
+
             for t in (vocab_terms or []):
-                all_known.add(t.lower())
+                _add_known(t)
             for t in (protected_terms or []):
-                all_known.add(t.lower())
+                _add_known(t)
             for h in (ocr_hints or []):
                 for w in h.split():
                     if len(w) > 2 and w[0].isupper():
-                        all_known.add(w.lower())
+                        _add_known(w)
             # Include web vocab terms so web-sourced corrections pass the filter
             if web_vocab:
                 for v in web_vocab:
                     term = v.get("term", "")
                     if term:
-                        all_known.add(term.lower())
+                        _add_known(term)
 
             # Build set of trusted swaps from Step 2 error candidates
             # The detector already validated these — trust them
@@ -282,6 +294,20 @@ def reconcile_segments(
                         candidate_swaps.add((err, fix))
                         # Also add the correction target to all_known
                         all_known.add(fix)
+
+            # Build a set of OCR entity words for cross-referencing.
+            # These are capitalized words from the raw OCR text that may
+            # serve as better correction targets than the LLM's proposal.
+            ocr_entity_words: dict[str, str] = {}  # lowercased → original
+            for h in (ocr_hints or []):
+                for w in h.split():
+                    w_stripped = w.strip(".,!?;:'\"()[]{}")
+                    if len(w_stripped) > 3 and w_stripped[0].isupper():
+                        ocr_entity_words[w_stripped.lower()] = w_stripped
+                        # Also store dehyphenated form
+                        dehyph = w_stripped.lower().replace("-", "")
+                        if dehyph != w_stripped.lower():
+                            ocr_entity_words[dehyph] = w_stripped
 
             vocab_swaps = []
             for swap_str in swaps:
@@ -297,10 +323,38 @@ def reconcile_segments(
                     continue
 
                 # Check 2: Does EITHER old or new word relate to a known vocab/OCR term?
-                old_matches = old_word in all_known or any(old_word in k for k in all_known if len(k) > 3)
-                new_matches = new_word in all_known or any(new_word in k for k in all_known if len(k) > 3)
+                # Also check dehyphenated forms to catch "Post-Sog" vs "posthog" style mismatches.
+                old_dehyph = old_word.replace("-", "")
+                new_dehyph = new_word.replace("-", "")
+                old_matches = (old_word in all_known or old_dehyph in all_known
+                               or any(old_word in k for k in all_known if len(k) > 3))
+                new_matches = (new_word in all_known or new_dehyph in all_known
+                               or any(new_word in k for k in all_known if len(k) > 3))
 
                 if old_matches or new_matches:
+                    # ── OCR cross-reference override ──
+                    # The LLM proposed old → new, but check if the raw OCR
+                    # text contains a BETTER match for the original word.
+                    # E.g. LLM says "Post-Sog → Post-SOC" but OCR shows
+                    # "PostHog" on screen — prefer the OCR version.
+                    import jellyfish
+                    best_ocr_word = None
+                    best_ocr_sim = 0.0
+                    old_clean = old_word.replace("-", "").replace("'", "")
+                    for ocr_low, ocr_orig in ocr_entity_words.items():
+                        if ocr_low == old_clean or ocr_low == old_word:
+                            continue  # same word, not useful
+                        sim = jellyfish.jaro_winkler_similarity(old_clean, ocr_low.replace("-", ""))
+                        if sim > best_ocr_sim and sim > 0.80:
+                            best_ocr_sim = sim
+                            best_ocr_word = ocr_orig
+
+                    if best_ocr_word and best_ocr_sim > jellyfish.jaro_winkler_similarity(old_clean, new_word.replace("-", "")):
+                        old_display = parts[0].strip().strip("'\"")
+                        logger.info("    OCR override: %s → %s (was %s, OCR sim=%.2f)",
+                                    old_display, best_ocr_word, parts[1].strip().strip("'\""), best_ocr_sim)
+                        swap_str = f"{old_display} → {best_ocr_word}"
+
                     vocab_swaps.append(swap_str)
                 else:
                     logger.info("    Filtered: %s (neither word in vocab/candidates)", swap_str)

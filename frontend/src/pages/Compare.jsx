@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import {
   ShieldCheck,
   Bot,
@@ -9,6 +9,7 @@ import {
   Loader2,
 } from 'lucide-react'
 import { useCorrections } from '../api/queries'
+import api from '../api/client'
 import { useEvaluate } from '../api/mutations'
 
 /* ── helpers ── */
@@ -82,7 +83,19 @@ export default function Compare() {
 
   /* --- API hooks --- */
   const { data: corrections, isLoading: correctionsLoading } = useCorrections(50)
+  const [amiMeetings, setAmiMeetings] = useState([])
+  const [earningsCalls, setEarningsCalls] = useState([])
+  const [slideavsrVideos, setSlideavsrVideos] = useState([])
+  const [amiV2Meetings, setAmiV2Meetings] = useState([])
   const evaluate = useEvaluate()
+
+  // Fetch dataset lists
+  useEffect(() => {
+    api.get('/api/ami/list').then(r => setAmiMeetings(r.data?.meetings || [])).catch(() => {})
+    api.get('/api/earnings/list').then(r => setEarningsCalls(r.data?.meetings || [])).catch(() => {})
+    api.get('/api/slideavsr/list').then(r => setSlideavsrVideos(r.data?.meetings || [])).catch(() => {})
+    api.get('/api/ami_v2/list').then(r => setAmiV2Meetings(r.data?.meetings || [])).catch(() => {})
+  }, [])
 
   /* --- run evaluation --- */
   const runEvaluation = useCallback(
@@ -100,7 +113,7 @@ export default function Compare() {
 
   /* --- handle correction selection --- */
   const handleSelect = useCallback(
-    (value) => {
+    async (value) => {
       setHistoryOpen(false)
       if (value === '__manual__') {
         setSelectedId('__manual__')
@@ -108,6 +121,62 @@ export default function Compare() {
         setHypothesisText('')
         setEvalResult(null)
         setSelectedCorrection(null)
+        return
+      }
+      // AMI meeting comparison
+      if (value.startsWith('ami::')) {
+        const meetingId = value.replace('ami::', '')
+        setSelectedId(value)
+        setSelectedCorrection(null)
+        try {
+          const res = await api.get(`/api/ami/compare/${meetingId}`)
+          const d = res.data
+          setReferenceText(d.ground_truth || '')
+          setHypothesisText(d.screenapp_text || '')
+          runEvaluation(d.ground_truth, d.screenapp_text)
+        } catch { /* ignore */ }
+        return
+      }
+      // Earnings-22 comparison
+      if (value.startsWith('earnings::')) {
+        const fileId = value.replace('earnings::', '')
+        setSelectedId(value)
+        setSelectedCorrection(null)
+        try {
+          const res = await api.get(`/api/earnings/compare/${fileId}`)
+          const d = res.data
+          setReferenceText(d.ground_truth || '')
+          setHypothesisText(d.screenapp_text || '')
+          runEvaluation(d.ground_truth, d.screenapp_text)
+        } catch { /* ignore */ }
+        return
+      }
+      // AMI v2 comparison
+      if (value.startsWith('ami_v2::')) {
+        const fileId = value.replace('ami_v2::', '')
+        setSelectedId(value)
+        setSelectedCorrection(null)
+        try {
+          const res = await api.get(`/api/ami_v2/compare/${fileId}`)
+          const d = res.data
+          setReferenceText(d.ground_truth || '')
+          setHypothesisText(d.screenapp_text || '')
+          runEvaluation(d.ground_truth, d.screenapp_text)
+        } catch { /* ignore */ }
+        return
+      }
+      // SlideAVSR comparison
+      if (value.startsWith('slideavsr::')) {
+        const fileId = value.replace('slideavsr::', '')
+        setSelectedId(value)
+        setSelectedCorrection(null)
+        try {
+          const res = await api.get(`/api/slideavsr/compare/${fileId}`)
+          const d = res.data
+          setReferenceText(d.ground_truth || '')
+          setHypothesisText(d.screenapp_text || '')
+          runEvaluation(d.ground_truth, d.screenapp_text)
+        } catch { /* ignore */ }
         return
       }
       const corr = (corrections || []).find((c) => c.file_id === value)
@@ -184,10 +253,33 @@ export default function Compare() {
   })
 
   /* --- dropdown options --- */
-  const correctionOptions = (corrections || []).map((c) => ({
-    value: c.file_id,
-    label: `${c.file_id}  \u2014  ${fmtDate(c.created_at)}  (${c.corrections_applied ?? 0} applied)`,
-  }))
+  const correctionOptions = [
+    // AMI v2 meetings
+    ...amiV2Meetings.map((m) => ({
+      value: `ami_v2::${m.meeting_id}`,
+      label: `AMI v2 ${m.meeting_id}  \u2014  WER ${m.baseline_wer}%`,
+    })),
+    // SlideAVSR videos
+    ...slideavsrVideos.map((m) => ({
+      value: `slideavsr::${m.file_id || m.meeting_id}`,
+      label: `SlideAVSR ${m.file_id || m.meeting_id}  \u2014  WER ${m.baseline_wer}%`,
+    })),
+    // Earnings-22 calls
+    ...earningsCalls.map((m) => ({
+      value: `earnings::${m.meeting_id}`,
+      label: `Earnings ${m.meeting_id}  \u2014  ${m.accent} (${m.country})  WER ${m.baseline_wer}%`,
+    })),
+    // AMI meetings
+    ...amiMeetings.map((m) => ({
+      value: `ami::${m.meeting_id}`,
+      label: `AMI ${m.meeting_id}  \u2014  GT vs ScreenApp  (WER ${m.baseline_wer}%)`,
+    })),
+    // Correction history
+    ...(corrections || []).map((c) => ({
+      value: c.file_id,
+      label: `${c.file_id}  \u2014  ${fmtDate(c.created_at)}  (${c.corrections_applied ?? 0} applied)`,
+    })),
+  ]
 
   return (
     <div>
