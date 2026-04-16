@@ -309,6 +309,15 @@ def reconcile_segments(
                         if dehyph != w_stripped.lower():
                             ocr_entity_words[dehyph] = w_stripped
 
+            # Build set of correct term forms — if the OLD word is one of
+            # these, it's already the right spelling and must NOT be replaced.
+            # This prevents "Meetrix → Metrix" when Meetrix is the correct term.
+            correct_terms = set()
+            for t in (vocab_terms or []):
+                correct_terms.add(t.lower())
+            for t in (protected_terms or []):
+                correct_terms.add(t.lower())
+
             vocab_swaps = []
             for swap_str in swaps:
                 if "→" not in swap_str:
@@ -317,6 +326,13 @@ def reconcile_segments(
                 old_word = parts[0].strip().strip("'\"").lower()
                 new_word = parts[1].strip().strip("'\"").lower()
 
+                # Guard: if old word IS a correct vocab/protected term, skip —
+                # the transcript already has the right word.
+                old_dehyph = old_word.replace("-", "")
+                if old_word in correct_terms or old_dehyph in correct_terms:
+                    logger.info("    Protected: %s (already a correct vocab term)", swap_str)
+                    continue
+
                 # Check 1: Does this swap match a Step 2 error candidate?
                 if (old_word, new_word) in candidate_swaps:
                     vocab_swaps.append(swap_str)
@@ -324,7 +340,6 @@ def reconcile_segments(
 
                 # Check 2: Does EITHER old or new word relate to a known vocab/OCR term?
                 # Also check dehyphenated forms to catch "Post-Sog" vs "posthog" style mismatches.
-                old_dehyph = old_word.replace("-", "")
                 new_dehyph = new_word.replace("-", "")
                 old_matches = (old_word in all_known or old_dehyph in all_known
                                or any(old_word in k for k in all_known if len(k) > 3))
