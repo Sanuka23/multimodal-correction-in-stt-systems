@@ -388,7 +388,27 @@ def reconcile_segments(
 
             # Apply: directly replace the segment text
             enhanced_segments[i]["text"] = reconciled_text
-            all_swaps.extend(swaps)
+
+            # Compute per-swap confidence based on evidence sources:
+            # - Candidate swap (Step 2 detected): 0.95 (LLM + vocab confirmed)
+            # - OCR-backed swap: 0.90 (OCR visible on screen)
+            # - Vocab match swap: 0.80 (in domain vocab but not detected by LLM)
+            # - Generic swap: 0.70 (reconciler proposed, passed vocab filter)
+            for swap in swaps:
+                swap_conf = confidence  # Base from reconciler LLM
+                if "→" in swap:
+                    sp = swap.split("→")
+                    sw_old = sp[0].strip().strip("'\"").lower()
+                    sw_new = sp[1].strip().strip("'\"").lower()
+                    if (sw_old, sw_new) in candidate_swaps:
+                        swap_conf = 0.95
+                    elif sw_new in {o.lower() for o in ocr_entity_words.values()}:
+                        swap_conf = 0.90
+                    elif sw_new in all_known:
+                        swap_conf = 0.85
+                    else:
+                        swap_conf = 0.70
+                all_swaps.append({"swap": swap, "confidence": round(swap_conf, 2)})
 
             logger.info("  [%.1f-%.1fs] %d swaps:", seg_start, seg_end, len(swaps))
             for swap in swaps:
