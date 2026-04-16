@@ -1,10 +1,11 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Briefcase, GitCompare, Brain, Database, BarChart3, Rocket } from 'lucide-react'
+import { LayoutDashboard, Briefcase, GitCompare, Brain, Database, BarChart3, Pencil, Rocket } from 'lucide-react'
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/jobs', icon: Briefcase, label: 'Jobs' },
   { to: '/compare', icon: GitCompare, label: 'Compare' },
+  { to: '/annotate', icon: Pencil, label: 'Annotate' },
   { to: '/training', icon: Brain, label: 'Training' },
   { to: '/training-data', icon: Database, label: 'Training Data' },
   { to: '/eval', icon: BarChart3, label: 'Evaluation' },
