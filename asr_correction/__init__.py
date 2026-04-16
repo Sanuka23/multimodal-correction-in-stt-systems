@@ -300,9 +300,18 @@ def correct_transcript(
     # Build report
     from .types import CorrectionResult, CorrectionCandidate
     results = []
-    for change_str in all_changes:
-        if "→" in str(change_str):
-            parts = str(change_str).split("→")
+    for change_item in all_changes:
+        # all_changes is now a list of dicts: {"swap": "old → new", "confidence": 0.95}
+        # (backwards compat: handle plain strings from older code paths too)
+        if isinstance(change_item, dict):
+            change_str = change_item.get("swap", "")
+            swap_confidence = change_item.get("confidence", 0.9)
+        else:
+            change_str = str(change_item)
+            swap_confidence = 0.9
+
+        if "→" in change_str:
+            parts = change_str.split("→")
             if len(parts) == 2:
                 old_w = parts[0].strip()
                 new_w = parts[1].strip()
@@ -315,7 +324,7 @@ def correct_transcript(
                     ),
                     corrected_text=new_w,
                     changes=[change_str],
-                    confidence=0.9,
+                    confidence=swap_confidence,
                     need_lip=False,
                     ocr_hints_used=[],
                     applied=True,
