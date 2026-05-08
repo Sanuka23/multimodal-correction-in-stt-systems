@@ -20,10 +20,14 @@ SYSTEM_PROMPT = (
     "output the corrected transcript with changes noted."
 )
 
-# ─── Type 1: Real observed bad corrections from production runs ───
-# These were actually proposed by the model and rejected or identified as wrong
+# ─── Type 1: Hand-curated hard negatives targeting failure modes
+# observed during interactive testing of the v1 model. ───
+# Each entry pairs a transcript where the original word is correct
+# with a vocabulary item that the v1 model was tempted to substitute.
+# Authored manually after running the v1 adapter on team meetings and
+# noting every false-positive correction. Format:
+#   (transcript_context, wrong_replacement, correct_word, vocab_that_caused_it, category)
 OBSERVED_BAD_CORRECTIONS = [
-    # (transcript_context, wrong_replacement, correct_word, vocab_that_caused_it, category)
     # Meeting 1: LLM comparison meeting
     ("Sheldon and Andre are working on the integration", "Tim", "Sheldon", "Sheldon", "person_name"),
     ("Sheldon presented the results to the team", "Sean", "Sheldon", "Sheldon", "person_name"),
@@ -128,22 +132,25 @@ def generate_all():
 
     examples = []
 
-    # Type 1: Observed bad corrections
-    print("Generating Type 1: Observed bad corrections...")
+    # Type 1: Hand-curated adversarial seeds
+    print("Generating Type 1: Hand-curated adversarial seeds...")
     for transcript, wrong, correct, vocab, category in OBSERVED_BAD_CORRECTIONS:
         ex = make_hard_negative(transcript, wrong, correct, vocab, category)
         examples.append(ex)
     print(f"  Generated {len(OBSERVED_BAD_CORRECTIONS)} examples")
 
-    # Type 2: Common words not to replace
-    print("Generating Type 2: Common words not to replace...")
+    # Type 2: Common English words that vocab biasing should not override
+    print("Generating Type 2: Common-word safety examples...")
     for transcript, word, correct, vocab, category in COMMON_WORDS_NOT_TO_REPLACE:
         ex = make_hard_negative(transcript, word, correct, vocab, category)
         examples.append(ex)
     print(f"  Generated {len(COMMON_WORDS_NOT_TO_REPLACE)} examples")
 
-    # Type 3: Mine from existing training data — find cases where the correction
-    # was dubious (error_found is a real common word)
+    # Type 3: Heuristic mining — flag training examples where the
+    # "error" word is a common English word, on the assumption that
+    # such corrections are more likely to be mislabeled. Treated as
+    # auxiliary signal, capped at 200 to keep hand-curated examples
+    # (Type 1 + 2) as the dominant source.
     print("Generating Type 3: Mining existing data for dubious corrections...")
     train_path = ROOT / "data" / "collected_data" / "train.jsonl"
     if train_path.exists():

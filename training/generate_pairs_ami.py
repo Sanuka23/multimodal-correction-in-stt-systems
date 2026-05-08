@@ -25,7 +25,12 @@ from generate_pairs import generate_pairs_from_alignment, save_pairs
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 
-# Common ASR error patterns (word → likely ASR mistake)
+# Hand-curated table of homophones and word-pair confusions. Each entry
+# pairs a written word with the surface form an ASR engine commonly emits
+# in its place. Compiled from manual review of common confusions in
+# English ASR output (their/there/they're, affect/effect, etc.). Used by
+# `introduce_asr_errors()` to corrupt clean ground-truth into synthetic
+# noisy transcripts when paired audio isn't available.
 COMMON_SUBSTITUTIONS = {
     "their": ["there", "they're"],
     "there": ["their", "they're"],
