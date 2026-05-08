@@ -2,6 +2,7 @@ import { useState, useMemo, Fragment } from 'react'
 import { Database, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileText, Eye } from 'lucide-react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
 import { useTrainingDatasets, useTrainingData } from '../api/queries'
+import PageHeader from '../components/ui/PageHeader'
 
 const ACCENT_COLORS = {
   south_asian: '#7bd0ff',
@@ -266,18 +267,12 @@ export default function TrainingData() {
 
   return (
     <div>
-      {/* Header */}
-      <header className="mb-8">
-        <div className="flex items-center gap-3 mb-2">
-          <Database size={20} className="text-primary" />
-          <h2 className="font-headline text-3xl font-extrabold text-on-surface tracking-tight">
-            Training Data
-          </h2>
-        </div>
-        <p className="text-on-surface-variant font-body max-w-xl">
-          Browse training datasets, inspect examples, and analyze data distribution across accents and categories.
-        </p>
-      </header>
+      <PageHeader
+        eyebrow="Corpus Explorer"
+        title="Training Data"
+        description="Browse training datasets, inspect example pairs, and analyse data distribution across accents and categories."
+        icon={Database}
+      />
 
       {/* Dataset Cards */}
       <section className="mb-8">

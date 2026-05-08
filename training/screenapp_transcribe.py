@@ -145,7 +145,10 @@ class ScreenAppTranscriber:
                     continue
 
                 file_data = file_resp.json()
+                # API may nest under data.transcript or directly as transcript
                 transcript = file_data.get("transcript")
+                if not transcript and isinstance(file_data.get("data"), dict):
+                    transcript = file_data["data"].get("transcript")
                 if transcript and transcript.get("text"):
                     logger.info("Transcript ready for %s (%d chars)",
                                 file_name, len(transcript["text"]))

@@ -39,9 +39,28 @@ class CorrectionConfig:
     whisper_max_segments: int = 40
     whisper_segment_padding_s: float = 2.0
 
+    # AVSR (Audio-Visual Speech Recognition / lip reading)
+    avsr_mode: str = "mediapipe"          # "none", "mediapipe", or "auto_avsr"
+    avsr_max_candidates: int = 20         # cap number of segments analyzed per file
+    avsr_min_speaking_confidence: float = 0.55  # below this, downgrade to no-hint
+    avsr_segment_padding_s: float = 0.5
+    avsr_run_on_all_flagged: bool = False  # when true, ignore category gate
+
     # Data collection
     collect_data: bool = True
     data_output_dir: Optional[str] = None
+
+    # ── Per-step enable toggles ─────────────────────────────────────
+    # Operators can disable individual stages from the Pipeline Control panel
+    # (see app/routes/pipeline_settings.py). Defaults: every stage ON.
+    enable_topic_classification: bool = True
+    enable_web_vocab_enrichment: bool = True
+    enable_candidate_validation: bool = True
+    enable_ocr_extraction: bool = True
+    enable_ocr_vocab_extraction: bool = True
+    enable_whisper_pass2: bool = True
+    enable_avsr: bool = True
+    enable_data_collection: bool = True
 
     # Runtime
     dry_run: bool = False

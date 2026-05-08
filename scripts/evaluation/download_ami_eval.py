@@ -48,6 +48,9 @@ def main():
                 ami = load_dataset(dataset_name, config, **kwargs)
             else:
                 ami = load_dataset(dataset_name, **kwargs)
+            # Remove audio column to avoid torchcodec dependency
+            if "audio" in ami.column_names:
+                ami = ami.remove_columns(["audio"])
             print(f"Loaded {len(ami)} segments from {dataset_name} ({config or 'default'}) {args.split} split")
             break
         except Exception as e:

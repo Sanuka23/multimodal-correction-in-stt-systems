@@ -11,7 +11,7 @@ from fastapi.templating import Jinja2Templates
 
 from .config import get_settings
 from .database import connect_db, close_db
-from .routes import correction, evaluation, training, dashboard, health
+from .routes import correction, evaluation, training, dashboard, health, pipeline_settings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -58,3 +58,4 @@ app.include_router(correction.router)
 app.include_router(evaluation.router, prefix="/api")
 app.include_router(training.router, prefix="/api")
 app.include_router(dashboard.router)
+app.include_router(pipeline_settings.router)

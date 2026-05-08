@@ -182,18 +182,64 @@ async def update_job_step(job_id: str, step_name: str, status: str,
         )
 
 
+_STATUS_RANK = {
+    "pending": 0,
+    "running": 1,
+    "skipped": 2,
+    "failed": 3,
+    "completed": 4,
+}
+
+
+def _dedupe_pipeline_steps(steps: list) -> list:
+    """Coalesce rows with the same `name` — keep the most-progressed status.
+
+    Repairs documents that were written before the route's bridge was
+    serialized (race condition produced two entries per step).
+    """
+    if not steps:
+        return []
+    by_name: dict = {}
+    for s in steps:
+        if not isinstance(s, dict):
+            continue
+        name = s.get("name")
+        if not name:
+            continue
+        prev = by_name.get(name)
+        if not prev:
+            by_name[name] = s
+            continue
+        r_prev = _STATUS_RANK.get(prev.get("status"), 0)
+        r_new = _STATUS_RANK.get(s.get("status"), 0)
+        if r_new > r_prev:
+            by_name[name] = s
+        elif r_new == r_prev:
+            # Tiebreak: the row that has a duration / details payload wins.
+            def _enrichment(x):
+                return (1 if x.get("duration_ms") is not None else 0) + (
+                    1 if (x.get("details") or {}) else 0
+                )
+            if _enrichment(s) > _enrichment(prev):
+                by_name[name] = s
+    return list(by_name.values())
+
+
 async def get_job_with_steps(job_id: str) -> dict:
     """Get a job document including its pipeline_steps array.
 
     Converts all datetime objects to ISO strings for JSON serialization.
+    Also de-duplicates pipeline_steps by name.
     """
     from bson import ObjectId
     db = get_dashboard_db()
     doc = await db[JOBS_COLLECTION].find_one({"_id": ObjectId(job_id)})
     if doc:
         doc["_id"] = str(doc["_id"])
+        # De-duplicate any leftover races from earlier runs.
+        doc["pipeline_steps"] = _dedupe_pipeline_steps(doc.get("pipeline_steps") or [])
         # Convert datetime objects to strings for JSON/Jinja2 tojson compatibility
-        for step in doc.get("pipeline_steps", []):
+        for step in doc["pipeline_steps"]:
             if isinstance(step.get("updated_at"), datetime):
                 step["updated_at"] = step["updated_at"].isoformat()
         if isinstance(doc.get("created_at"), datetime):

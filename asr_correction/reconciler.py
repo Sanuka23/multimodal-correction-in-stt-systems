@@ -33,6 +33,7 @@ def _build_reconciliation_prompt(
     error_candidates: List[dict] = None,
     topic_info: dict = None,
     web_vocab: List[dict] = None,
+    avsr_hints_for_segment: List[dict] = None,
 ) -> str:
     """Build holistic correction prompt using all available evidence."""
     # Merge domain + web vocab into one deduped list
@@ -79,6 +80,20 @@ def _build_reconciliation_prompt(
             + "\nIf either version contains one of these terms spelled correctly, KEEP that spelling.\n\n"
         )
 
+    # AVSR (lip-reading) hint — third opinion, used as a tiebreaker only.
+    avsr_section = ""
+    if avsr_hints_for_segment:
+        lines = []
+        for h in avsr_hints_for_segment[:3]:
+            lines.append(f"  - {h.get('hint','')}")
+        avsr_section = (
+            "Visual lip-reading hint (third opinion, ~19% WER — tiebreaker only):\n"
+            + "\n".join(lines)
+            + "\nRules: NEVER override an OCR-confirmed term based on this. "
+              "Use ONLY when Versions A and B disagree on a person name or "
+              "short content word and neither matches vocab.\n\n"
+        )
+
     return (
         "You have two ASR transcriptions of the SAME audio segment, plus multiple evidence sources. "
         "Produce the best corrected version.\n\n"
@@ -89,6 +104,7 @@ def _build_reconciliation_prompt(
         f"{candidates_section}"
         f"{protected_section}"
         f"{ocr_section}"
+        f"{avsr_section}"
         "Rules:\n"
         "1. Start with Version A as the base text (keep its structure, length, and flow)\n"
         "2. Pick the best word from EITHER version, OR from the vocabulary list\n"
@@ -152,6 +168,7 @@ def reconcile_segments(
     error_candidates: List[dict] = None,
     topic_info: dict = None,
     web_vocab: List[dict] = None,
+    avsr_hints: List[dict] = None,
 ) -> Tuple[dict, list]:
     """Holistic correction using all gathered evidence per segment.
 
@@ -229,6 +246,15 @@ def reconcile_segments(
                         ec.get("timestamp_end", 0) >= seg_start)
                 ]
 
+            # Filter AVSR hints to this segment's time range
+            seg_avsr = None
+            if avsr_hints:
+                seg_avsr = [
+                    h for h in avsr_hints
+                    if (h.get("start", 0) <= seg_end and
+                        h.get("end", 0) >= seg_start)
+                ]
+
             # Build and run reconciliation prompt with all evidence
             prompt = _build_reconciliation_prompt(
                 original_text, whisper_portion, vocab_terms, ocr_hints,
@@ -236,6 +262,7 @@ def reconcile_segments(
                 error_candidates=seg_candidates if seg_candidates else None,
                 topic_info=topic_info,
                 web_vocab=web_vocab,
+                avsr_hints_for_segment=seg_avsr if seg_avsr else None,
             )
 
             raw = run_inference_raw(
@@ -256,20 +283,32 @@ def reconcile_segments(
             # Only keep swaps where the word matches a known vocab term,
             # OCR term, protected term, or a Step 2 error candidate.
             all_known = set()
+
+            def _add_known(term: str):
+                """Add a term plus its hyphen-stripped variant to all_known."""
+                t = term.lower().strip()
+                if t:
+                    all_known.add(t)
+                    # Also store dehyphenated form so that "Post-Hog" matches
+                    # "posthog" and vice versa.
+                    dehyph = t.replace("-", "")
+                    if dehyph != t:
+                        all_known.add(dehyph)
+
             for t in (vocab_terms or []):
-                all_known.add(t.lower())
+                _add_known(t)
             for t in (protected_terms or []):
-                all_known.add(t.lower())
+                _add_known(t)
             for h in (ocr_hints or []):
                 for w in h.split():
                     if len(w) > 2 and w[0].isupper():
-                        all_known.add(w.lower())
+                        _add_known(w)
             # Include web vocab terms so web-sourced corrections pass the filter
             if web_vocab:
                 for v in web_vocab:
                     term = v.get("term", "")
                     if term:
-                        all_known.add(term.lower())
+                        _add_known(term)
 
             # Build set of trusted swaps from Step 2 error candidates
             # The detector already validated these — trust them
@@ -283,6 +322,29 @@ def reconcile_segments(
                         # Also add the correction target to all_known
                         all_known.add(fix)
 
+            # Build a set of OCR entity words for cross-referencing.
+            # These are capitalized words from the raw OCR text that may
+            # serve as better correction targets than the LLM's proposal.
+            ocr_entity_words: dict[str, str] = {}  # lowercased → original
+            for h in (ocr_hints or []):
+                for w in h.split():
+                    w_stripped = w.strip(".,!?;:'\"()[]{}")
+                    if len(w_stripped) > 3 and w_stripped[0].isupper():
+                        ocr_entity_words[w_stripped.lower()] = w_stripped
+                        # Also store dehyphenated form
+                        dehyph = w_stripped.lower().replace("-", "")
+                        if dehyph != w_stripped.lower():
+                            ocr_entity_words[dehyph] = w_stripped
+
+            # Build set of correct term forms — if the OLD word is one of
+            # these, it's already the right spelling and must NOT be replaced.
+            # This prevents "Meetrix → Metrix" when Meetrix is the correct term.
+            correct_terms = set()
+            for t in (vocab_terms or []):
+                correct_terms.add(t.lower())
+            for t in (protected_terms or []):
+                correct_terms.add(t.lower())
+
             vocab_swaps = []
             for swap_str in swaps:
                 if "→" not in swap_str:
@@ -291,16 +353,50 @@ def reconcile_segments(
                 old_word = parts[0].strip().strip("'\"").lower()
                 new_word = parts[1].strip().strip("'\"").lower()
 
+                # Guard: if old word IS a correct vocab/protected term, skip —
+                # the transcript already has the right word.
+                old_dehyph = old_word.replace("-", "")
+                if old_word in correct_terms or old_dehyph in correct_terms:
+                    logger.info("    Protected: %s (already a correct vocab term)", swap_str)
+                    continue
+
                 # Check 1: Does this swap match a Step 2 error candidate?
                 if (old_word, new_word) in candidate_swaps:
                     vocab_swaps.append(swap_str)
                     continue
 
                 # Check 2: Does EITHER old or new word relate to a known vocab/OCR term?
-                old_matches = old_word in all_known or any(old_word in k for k in all_known if len(k) > 3)
-                new_matches = new_word in all_known or any(new_word in k for k in all_known if len(k) > 3)
+                # Also check dehyphenated forms to catch "Post-Sog" vs "posthog" style mismatches.
+                new_dehyph = new_word.replace("-", "")
+                old_matches = (old_word in all_known or old_dehyph in all_known
+                               or any(old_word in k for k in all_known if len(k) > 3))
+                new_matches = (new_word in all_known or new_dehyph in all_known
+                               or any(new_word in k for k in all_known if len(k) > 3))
 
                 if old_matches or new_matches:
+                    # ── OCR cross-reference override ──
+                    # The LLM proposed old → new, but check if the raw OCR
+                    # text contains a BETTER match for the original word.
+                    # E.g. LLM says "Post-Sog → Post-SOC" but OCR shows
+                    # "PostHog" on screen — prefer the OCR version.
+                    import jellyfish
+                    best_ocr_word = None
+                    best_ocr_sim = 0.0
+                    old_clean = old_word.replace("-", "").replace("'", "")
+                    for ocr_low, ocr_orig in ocr_entity_words.items():
+                        if ocr_low == old_clean or ocr_low == old_word:
+                            continue  # same word, not useful
+                        sim = jellyfish.jaro_winkler_similarity(old_clean, ocr_low.replace("-", ""))
+                        if sim > best_ocr_sim and sim > 0.80:
+                            best_ocr_sim = sim
+                            best_ocr_word = ocr_orig
+
+                    if best_ocr_word and best_ocr_sim > jellyfish.jaro_winkler_similarity(old_clean, new_word.replace("-", "")):
+                        old_display = parts[0].strip().strip("'\"")
+                        logger.info("    OCR override: %s → %s (was %s, OCR sim=%.2f)",
+                                    old_display, best_ocr_word, parts[1].strip().strip("'\""), best_ocr_sim)
+                        swap_str = f"{old_display} → {best_ocr_word}"
+
                     vocab_swaps.append(swap_str)
                 else:
                     logger.info("    Filtered: %s (neither word in vocab/candidates)", swap_str)
@@ -334,7 +430,27 @@ def reconcile_segments(
 
             # Apply: directly replace the segment text
             enhanced_segments[i]["text"] = reconciled_text
-            all_swaps.extend(swaps)
+
+            # Compute per-swap confidence based on evidence sources:
+            # - Candidate swap (Step 2 detected): 0.95 (LLM + vocab confirmed)
+            # - OCR-backed swap: 0.90 (OCR visible on screen)
+            # - Vocab match swap: 0.80 (in domain vocab but not detected by LLM)
+            # - Generic swap: 0.70 (reconciler proposed, passed vocab filter)
+            for swap in swaps:
+                swap_conf = confidence  # Base from reconciler LLM
+                if "→" in swap:
+                    sp = swap.split("→")
+                    sw_old = sp[0].strip().strip("'\"").lower()
+                    sw_new = sp[1].strip().strip("'\"").lower()
+                    if (sw_old, sw_new) in candidate_swaps:
+                        swap_conf = 0.95
+                    elif sw_new in {o.lower() for o in ocr_entity_words.values()}:
+                        swap_conf = 0.90
+                    elif sw_new in all_known:
+                        swap_conf = 0.85
+                    else:
+                        swap_conf = 0.70
+                all_swaps.append({"swap": swap, "confidence": round(swap_conf, 2)})
 
             logger.info("  [%.1f-%.1fs] %d swaps:", seg_start, seg_end, len(swaps))
             for swap in swaps:

@@ -8,6 +8,7 @@ import TrainingData from './pages/TrainingData'
 import PipelineControl from './pages/PipelineControl'
 import Pipeline from './pages/Pipeline'
 import Eval from './pages/Eval'
+import Annotate from './pages/Annotate'
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="pipeline-control" element={<PipelineControl />} />
           <Route path="pipeline/:jobId" element={<Pipeline />} />
           <Route path="eval" element={<Eval />} />
+          <Route path="annotate" element={<Annotate />} />
         </Route>
       </Routes>
     </BrowserRouter>
