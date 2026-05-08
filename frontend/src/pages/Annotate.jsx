@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Pencil, Upload, Save, Play, Pause, SkipBack, Download, Check, X, Volume2, Link, Loader } from 'lucide-react'
 import api from '../api/client'
+import PageHeader from '../components/ui/PageHeader'
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -275,19 +276,13 @@ export default function Annotate() {
   /* ---------------------------------------------------------------- */
 
   return (
-    <div className="max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="mb-8">
-        <p className="font-label text-xs text-primary uppercase tracking-[0.3em] mb-1">
-          Transcript Annotator
-        </p>
-        <h2 className="font-headline text-3xl font-extrabold text-on-surface tracking-tight">
-          Annotate & Correct
-        </h2>
-        <p className="text-on-surface-variant text-sm mt-1">
-          Play audio, click words to correct, export training data
-        </p>
-      </div>
+    <div>
+      <PageHeader
+        eyebrow="Transcript Annotator"
+        title="Annotate & Correct"
+        description="Play audio, click any word to fix the transcript inline, and export ground-truth pairs for training."
+        icon={Pencil}
+      />
 
       {/* Load from ScreenApp URL */}
       {!transcript && (

@@ -33,6 +33,7 @@ def _build_reconciliation_prompt(
     error_candidates: List[dict] = None,
     topic_info: dict = None,
     web_vocab: List[dict] = None,
+    avsr_hints_for_segment: List[dict] = None,
 ) -> str:
     """Build holistic correction prompt using all available evidence."""
     # Merge domain + web vocab into one deduped list
@@ -79,6 +80,20 @@ def _build_reconciliation_prompt(
             + "\nIf either version contains one of these terms spelled correctly, KEEP that spelling.\n\n"
         )
 
+    # AVSR (lip-reading) hint — third opinion, used as a tiebreaker only.
+    avsr_section = ""
+    if avsr_hints_for_segment:
+        lines = []
+        for h in avsr_hints_for_segment[:3]:
+            lines.append(f"  - {h.get('hint','')}")
+        avsr_section = (
+            "Visual lip-reading hint (third opinion, ~19% WER — tiebreaker only):\n"
+            + "\n".join(lines)
+            + "\nRules: NEVER override an OCR-confirmed term based on this. "
+              "Use ONLY when Versions A and B disagree on a person name or "
+              "short content word and neither matches vocab.\n\n"
+        )
+
     return (
         "You have two ASR transcriptions of the SAME audio segment, plus multiple evidence sources. "
         "Produce the best corrected version.\n\n"
@@ -89,6 +104,7 @@ def _build_reconciliation_prompt(
         f"{candidates_section}"
         f"{protected_section}"
         f"{ocr_section}"
+        f"{avsr_section}"
         "Rules:\n"
         "1. Start with Version A as the base text (keep its structure, length, and flow)\n"
         "2. Pick the best word from EITHER version, OR from the vocabulary list\n"
@@ -152,6 +168,7 @@ def reconcile_segments(
     error_candidates: List[dict] = None,
     topic_info: dict = None,
     web_vocab: List[dict] = None,
+    avsr_hints: List[dict] = None,
 ) -> Tuple[dict, list]:
     """Holistic correction using all gathered evidence per segment.
 
@@ -229,6 +246,15 @@ def reconcile_segments(
                         ec.get("timestamp_end", 0) >= seg_start)
                 ]
 
+            # Filter AVSR hints to this segment's time range
+            seg_avsr = None
+            if avsr_hints:
+                seg_avsr = [
+                    h for h in avsr_hints
+                    if (h.get("start", 0) <= seg_end and
+                        h.get("end", 0) >= seg_start)
+                ]
+
             # Build and run reconciliation prompt with all evidence
             prompt = _build_reconciliation_prompt(
                 original_text, whisper_portion, vocab_terms, ocr_hints,
@@ -236,6 +262,7 @@ def reconcile_segments(
                 error_candidates=seg_candidates if seg_candidates else None,
                 topic_info=topic_info,
                 web_vocab=web_vocab,
+                avsr_hints_for_segment=seg_avsr if seg_avsr else None,
             )
 
             raw = run_inference_raw(

@@ -10,21 +10,14 @@ import {
   Eye,
   ChevronRight,
   AudioWaveform,
+  LayoutDashboard,
+  Download,
 } from 'lucide-react'
 import Badge from '../components/ui/Badge'
+import PageHeader from '../components/ui/PageHeader'
 import { usePolling } from '../hooks/usePolling'
 import api from '../api/client'
-
-function timeAgo(dateStr) {
-  if (!dateStr) return ''
-  const diff = Date.now() - new Date(dateStr).getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return 'Just now'
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  return `${Math.floor(hrs / 24)}d ago`
-}
+import { formatDateTime, timeAgo } from '../utils/datetime'
 
 function formatDuration(ms) {
   if (!ms) return '\u2014'
@@ -128,6 +121,26 @@ export default function Dashboard() {
 
   return (
     <>
+      <PageHeader
+        eyebrow="Operator Console"
+        title="Live Dashboard"
+        description="Real-time overview of correction throughput, pipeline health and recent activity across the Kinetic engine."
+        icon={LayoutDashboard}
+        actions={
+          <>
+            <Link
+              to="/jobs"
+              className="flex items-center gap-2 px-3.5 py-2 obsidian-glass hover:bg-surface-bright text-on-surface-variant text-xs font-medium rounded-xl transition-all"
+            >
+              <Eye size={14} /> View Jobs
+            </Link>
+            <button className="flex items-center gap-2 px-3.5 py-2 bg-primary/10 text-primary hover:bg-primary/15 text-xs font-medium rounded-xl transition-all">
+              <Download size={14} /> Export Log
+            </button>
+          </>
+        }
+      />
+
       {/* ── Top Stats Row ── */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
         {/* Correction Count */}
@@ -334,7 +347,12 @@ export default function Dashboard() {
                           </h4>
                         </div>
                       </div>
-                      <span className="font-label text-[10px] text-slate-500">{timeAgo(c.created_at)}</span>
+                      <span
+                        className="font-mono text-[10px] text-slate-500"
+                        title={timeAgo(c.created_at)}
+                      >
+                        {formatDateTime(c.created_at)}
+                      </span>
                     </div>
 
                     {/* Detected / Corrected */}

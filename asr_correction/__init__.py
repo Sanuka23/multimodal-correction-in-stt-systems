@@ -39,6 +39,7 @@ def correct_transcript(
     avsr_provider=None,
     video_url: str = None,
     config: CorrectionConfig = None,
+    step_callback=None,
     **config_overrides,
 ) -> tuple:
     """Correct ASR errors in a ScreenApp transcript.
@@ -72,16 +73,35 @@ def correct_transcript(
 
     pipeline_start = time.time()
 
+    # ── Step-emitter — fans out pipeline-step events to dashboard / logs ──
+    def _emit(name: str, status: str, duration_ms=None, details=None):
+        """Emit a pipeline-step event. Safe to call when no callback is set."""
+        if step_callback is None:
+            return
+        try:
+            step_callback(name, status, duration_ms, details or {})
+        except Exception as cb_err:  # never let dashboard plumbing break the pipeline
+            logger.debug("step_callback raised: %s", cb_err)
+
     # Step 1: Merge vocabularies
+    _emit("vocab_merge", "running")
+    t_step = time.time()
     domain_vocab = load_domain_vocab(config.domain_vocab_path)
     vocab_terms = merge_vocabularies(custom_vocabulary, domain_vocab)
     logger.info("Step 1: Merged %d domain + %d custom → %d vocab terms",
                 len(domain_vocab), len(custom_vocabulary or []), len(vocab_terms))
+    _emit("vocab_merge", "completed", (time.time() - t_step) * 1000, {
+        "domain_terms": len(domain_vocab),
+        "custom_terms": len(custom_vocabulary or []),
+        "merged_terms": len(vocab_terms),
+    })
 
     # Step 2: Error detection — LLM Pass 1 (primary) → rule-based (fallback)
     from .model import load_model
     from .llm_detector import detect_errors
 
+    _emit("model_load", "running")
+    t_step = time.time()
     model, tokenizer = None, None
     if not config.dry_run:
         try:
@@ -91,9 +111,20 @@ def correct_transcript(
                 base_model=config.base_model,
                 backend=config.backend,
             )
+            _emit("model_load", "completed", (time.time() - t_step) * 1000, {
+                "base_model": config.base_model,
+                "backend": config.backend or "auto",
+                "adapter_path": config.adapter_path or "(prompt-only)",
+                "loaded": model is not None,
+            })
         except Exception as e:
             logger.error("Model loading failed: %s", e)
+            _emit("model_load", "failed", (time.time() - t_step) * 1000, {"error": str(e)})
+    else:
+        _emit("model_load", "skipped", 0, {"reason": "dry_run"})
 
+    _emit("candidate_detection", "running")
+    t_step = time.time()
     analyses = detect_errors(
         transcript, vocab_terms, model, tokenizer, config=config,
     )
@@ -103,6 +134,11 @@ def correct_transcript(
 
     if not candidates:
         logger.info("No candidates found — returning original transcript unchanged")
+        _emit("candidate_detection", "completed", (time.time() - t_step) * 1000, {
+            "total_segments": len(analyses),
+            "flagged_segments": 0,
+            "candidates_found": 0,
+        })
         report = CorrectionReport(
             file_id=file_id,
             corrections_attempted=0,
@@ -110,6 +146,9 @@ def correct_transcript(
             results=[],
             processing_time_ms=0,
         )
+        _emit("complete", "completed", (time.time() - pipeline_start) * 1000, {
+            "reason": "no_candidates",
+        })
         return transcript, report
 
     logger.info("Step 2: Found %d candidates in %d/%d segments",
@@ -120,23 +159,75 @@ def correct_transcript(
     if len(candidates) > 10:
         logger.info("  ... and %d more candidates (showing first 10)", len(candidates) - 10)
 
+    _emit("candidate_detection", "completed", (time.time() - t_step) * 1000, {
+        "total_segments": len(analyses),
+        "flagged_segments": len(flagged),
+        "candidates_found": len(candidates),
+        "candidates": [
+            {
+                "error_found": c.error_found,
+                "likely_correct": c.term,
+                "category": c.category,
+                "timestamp": f"{c.timestamp_start:.0f}-{c.timestamp_end:.0f}s",
+            }
+            for c in candidates[:50]
+        ],
+    })
+
     # Step 2.5: Topic/field classification
-    topic_info = _classify_topic(transcript, vocab_terms, candidates, model, tokenizer)
+    if config.enable_topic_classification:
+        _emit("topic_classification", "running")
+        t_step = time.time()
+        topic_info = _classify_topic(transcript, vocab_terms, candidates, model, tokenizer)
+        _emit("topic_classification", "completed", (time.time() - t_step) * 1000, {
+            "field": topic_info.get("field"),
+            "topic": topic_info.get("topic"),
+            "description": topic_info.get("description"),
+            "suggested_vocab": (topic_info.get("suggested_vocab") or [])[:20],
+        })
+    else:
+        topic_info = {"field": "unknown", "topic": "unknown", "description": "", "suggested_vocab": []}
+        _emit("topic_classification", "skipped", 0, {"reason": "Disabled in pipeline settings"})
 
     # Step 2.6: Web vocab enrichment (search web using description, extract vocab with Qwen)
-    web_vocab = _enrich_vocab_from_web(topic_info, model, tokenizer)
+    if config.enable_web_vocab_enrichment:
+        _emit("web_vocab_enrichment", "running")
+        t_step = time.time()
+        web_vocab = _enrich_vocab_from_web(topic_info, model, tokenizer)
+        _emit(
+            "web_vocab_enrichment",
+            "completed" if web_vocab else "skipped",
+            (time.time() - t_step) * 1000,
+            {
+                "terms_added": len(web_vocab or []),
+                "terms": (web_vocab or [])[:30],
+            },
+        )
+    else:
+        web_vocab = []
+        _emit("web_vocab_enrichment", "skipped", 0, {"reason": "Disabled in pipeline settings"})
 
     # Step 2.7: Per-candidate web search validation
-    # When the LLM proposes a correction target that isn't in the vocab,
-    # web-search for the error word to find a better-known entity.
-    # E.g. "Post-Sog" → search → find "PostHog" → override "Post-SOC"
-    _validate_candidates_via_web(candidates, vocab_terms, topic_info)
+    if config.enable_candidate_validation:
+        _emit("candidate_validation", "running")
+        t_step = time.time()
+        _validate_candidates_via_web(candidates, vocab_terms, topic_info)
+        _emit("candidate_validation", "completed", (time.time() - t_step) * 1000, {
+            "candidates_after": len(candidates),
+        })
+    else:
+        _emit("candidate_validation", "skipped", 0, {"reason": "Disabled in pipeline settings"})
 
     # Step 3: Smart OCR — targeted frames at error timestamps + evenly-spaced fallback
+    _emit("ocr_extraction", "running")
+    t_step = time.time()
     targeted_ocr_provider = ocr_provider
     quick_ocr_hints = []
 
-    if not ocr_provider and video_url and not config.dry_run:
+    if not config.enable_ocr_extraction:
+        # Toggled off — skip the whole block.
+        pass
+    elif not ocr_provider and video_url and not config.dry_run:
         try:
             from .video_frames import extract_frames_periodic, extract_frames_at_timestamps, get_video_duration
             from .ocr_extractor import _ocr_single_frame
@@ -205,14 +296,51 @@ def correct_transcript(
     else:
         logger.info("Step 3: No video URL — skipping OCR")
 
+    if not config.enable_ocr_extraction:
+        _emit("ocr_extraction", "skipped", (time.time() - t_step) * 1000, {
+            "reason": "Disabled in pipeline settings",
+        })
+    else:
+        _emit(
+            "ocr_extraction",
+            "skipped" if (not video_url and not ocr_provider) else "completed",
+            (time.time() - t_step) * 1000,
+            {
+                "hints": len(quick_ocr_hints),
+                "samples": quick_ocr_hints[:8],
+                "source": "cached" if ocr_provider else ("video" if video_url else "none"),
+                "reason": None if (video_url or ocr_provider) else "No video URL or cached OCR",
+            },
+        )
+
     # Step 3.5: Extract structured vocab from OCR text (names, products, companies)
-    ocr_vocab = []
-    if quick_ocr_hints and model and not config.dry_run:
-        ocr_vocab = _extract_vocab_from_ocr(quick_ocr_hints, model, tokenizer)
+    if not config.enable_ocr_vocab_extraction:
+        ocr_vocab = []
+        _emit("ocr_vocab_extraction", "skipped", 0, {"reason": "Disabled in pipeline settings"})
+    else:
+        _emit("ocr_vocab_extraction", "running")
+        t_step = time.time()
+        ocr_vocab = []
+        if quick_ocr_hints and model and not config.dry_run:
+            ocr_vocab = _extract_vocab_from_ocr(quick_ocr_hints, model, tokenizer)
+        _emit(
+            "ocr_vocab_extraction",
+            "completed" if ocr_vocab else "skipped",
+            (time.time() - t_step) * 1000,
+            {
+                "terms_extracted": len(ocr_vocab),
+                "terms": ocr_vocab[:30],
+                "reason": None if ocr_vocab else "No OCR text to mine",
+            },
+        )
 
     # Step 4: Whisper Pass 2 — re-transcribe flagged segments with vocab hints
+    _emit("whisper_pass2", "running")
+    t_step = time.time()
     whisper_segments = {}
-    if video_url and flagged and not config.dry_run:
+    if not config.enable_whisper_pass2:
+        pass  # toggled off — skip
+    elif video_url and flagged and not config.dry_run:
         try:
             from .whisper_pass2 import retranscribe_flagged_segments, build_initial_prompt
 
@@ -248,7 +376,78 @@ def correct_transcript(
     else:
         logger.info("Step 4: No flagged segments — skipping Whisper Pass 2")
 
+    if not config.enable_whisper_pass2:
+        _emit("whisper_pass2", "skipped", (time.time() - t_step) * 1000, {
+            "reason": "Disabled in pipeline settings",
+        })
+    else:
+        skip_reason = None
+        if not video_url:
+            skip_reason = "No video URL"
+        elif not flagged:
+            skip_reason = "No flagged segments to re-transcribe"
+        _emit(
+            "whisper_pass2",
+            "completed" if whisper_segments else ("skipped" if skip_reason else "completed"),
+            (time.time() - t_step) * 1000,
+            {
+                "segments_re_transcribed": len(whisper_segments),
+                "model": getattr(config, "whisper_model_size", "small"),
+                "device": getattr(config, "whisper_device", "cpu"),
+                "compute_type": getattr(config, "whisper_compute_type", "int8"),
+                "reason": skip_reason,
+            },
+        )
+
+    # Step 4.5: AVSR (lip-reading) hints for AVSR-eligible candidates.
+    # Lazy-create a default provider if the caller didn't pass one.
+    _emit("avsr_extraction", "running")
+    t_step = time.time()
+    avsr_hints = []
+    avsr_skip_reason = None
+
+    if not config.enable_avsr:
+        avsr_skip_reason = "Disabled in pipeline settings"
+    elif not video_url:
+        avsr_skip_reason = "No video URL"
+    elif not flagged:
+        avsr_skip_reason = "No flagged segments"
+    else:
+        avsr_hints = _gather_avsr_hints(
+            avsr_provider=avsr_provider,
+            flagged=flagged,
+            candidates=candidates,
+            video_url=video_url,
+            config=config,
+        )
+        if not avsr_hints:
+            # _gather_avsr_hints already logged the precise reason — surface it.
+            avsr_skip_reason = (
+                "No AVSR-eligible candidates (no person_name / content_word "
+                "candidates flagged). Toggle 'Run AVSR on all flagged' in "
+                "settings to bypass this gate."
+            )
+
+    _emit(
+        "avsr_extraction",
+        "completed" if avsr_hints else "skipped",
+        (time.time() - t_step) * 1000,
+        {
+            "mode": getattr(config, "avsr_mode", "mediapipe"),
+            "hints": len(avsr_hints),
+            "lip_transcripts": sum(1 for h in (avsr_hints or []) if h.get("lip_transcript")),
+            "samples": [
+                {"start": h["start"], "end": h["end"], "hint": h["hint"][:80]}
+                for h in (avsr_hints or [])[:5]
+            ],
+            "reason": avsr_skip_reason,
+        },
+    )
+
     # Step 5: LLM Reconciliation — compare original vs Whisper, pick best words
+    _emit("llm_reconciliation", "running")
+    t_step = time.time()
+    _reconcile_failed = False
     enhanced = dict(transcript)
     all_changes = []
     if whisper_segments and not config.dry_run:
@@ -290,12 +489,29 @@ def correct_transcript(
                 error_candidates=error_candidate_dicts,
                 topic_info=topic_info,
                 web_vocab=web_vocab,
+                avsr_hints=avsr_hints,
             )
         except Exception as e:
             logger.warning("Step 5: Reconciliation failed — %s", e)
             enhanced = dict(transcript)
+            _reconcile_failed = True
+            _emit("llm_reconciliation", "failed", (time.time() - t_step) * 1000, {"error": str(e)})
     else:
         logger.info("Step 5: No Whisper segments to reconcile — returning original")
+
+    if not _reconcile_failed:
+        _emit(
+            "llm_reconciliation",
+            "completed" if all_changes else ("skipped" if not whisper_segments else "completed"),
+            (time.time() - t_step) * 1000,
+            {
+                "swaps": len(all_changes),
+                "sample_swaps": [
+                    (item.get("swap") if isinstance(item, dict) else str(item))
+                    for item in (all_changes or [])[:10]
+                ],
+            },
+        )
 
     # Build report
     from .types import CorrectionResult, CorrectionCandidate
@@ -339,11 +555,32 @@ def correct_transcript(
     )
 
     # Step 6: Collect data for future training
-    if config.collect_data and report.results:
+    _emit("data_collection", "running")
+    t_step = time.time()
+    collected_count = 0
+    skip_reason = None
+    if not config.enable_data_collection:
+        skip_reason = "Disabled in pipeline settings"
+    elif not config.collect_data:
+        skip_reason = "collect_data=False on config"
+    elif not report.results:
+        skip_reason = "No corrections to collect"
+    else:
         logger.info("Step 6: Collecting %d results for training data", len(report.results))
         collect_correction_data(
             report.results, config.system_prompt, config.data_output_dir
         )
+        collected_count = len(report.results)
+    _emit(
+        "data_collection",
+        "completed" if collected_count else "skipped",
+        (time.time() - t_step) * 1000,
+        {
+            "collected": collected_count,
+            "output_dir": config.data_output_dir,
+            "reason": skip_reason,
+        },
+    )
 
     # Add metadata to report
     report.selector_info = {
@@ -352,12 +589,32 @@ def correct_transcript(
         "ocr_hints": len(quick_ocr_hints),
         "whisper_segments": len(whisper_segments),
         "candidates_found": len(candidates),
+        "web_vocab_count": len(web_vocab or []),
+        "avsr_hints_count": len(avsr_hints or []),
+        "avsr_lip_transcripts": sum(
+            1 for h in (avsr_hints or []) if h.get("lip_transcript")
+        ),
     }
     report.topic_info = topic_info
+    # Compact evidence breakdown — handy for the Compare page's
+    # "Evidence Sources" panel and the Pipeline Monitor hover details.
+    report.evidence_sources = {
+        "vocab":     len(vocab_terms or []),
+        "ocr":       len(quick_ocr_hints or []),
+        "ocr_vocab": len(ocr_vocab or []),
+        "web_vocab": len(web_vocab or []),
+        "avsr":      len(avsr_hints or []),
+    }
 
     total_ms = (time.time() - pipeline_start) * 1000
     report.processing_time_ms = total_ms
     logger.info("Pipeline complete in %.0fms", total_ms)
+
+    _emit("complete", "completed", total_ms, {
+        "corrections_attempted": report.corrections_attempted,
+        "corrections_applied": report.corrections_applied,
+        "evidence_sources": getattr(report, "evidence_sources", None),
+    })
 
     return enhanced, report
 
@@ -497,59 +754,137 @@ def analyze_transcript(
     }
 
 
-def _enrich_vocab_from_web(topic_info, model, tokenizer):
-    """Step 2.6: Search web using topic description, extract vocab with Qwen."""
+_ALLOWED_WEB_VOCAB_CATEGORIES = {
+    "product_name", "tech_term", "person_name",
+    "company_name", "domain_term", "tech_acronym",
+}
+
+
+def _truncate_at_sentence(text: str, max_chars: int) -> str:
+    """Truncate text on the last sentence boundary at or before max_chars.
+
+    Avoids the JSON-confusion problem where mid-sentence truncation feeds the
+    LLM a half-thought that it tries to "complete" inside the JSON array.
+    """
+    if len(text) <= max_chars:
+        return text
+    cut = text[:max_chars]
+    # Prefer the last sentence-end punctuation; fall back to the last whitespace.
+    for delim in (". ", "! ", "? ", "; ", "\n"):
+        idx = cut.rfind(delim)
+        if idx >= max_chars * 0.6:  # don't lose more than ~40 % of context
+            return cut[: idx + 1]
+    sp = cut.rfind(" ")
+    return cut[:sp] if sp > 0 else cut
+
+
+def _parse_web_vocab_json(raw: str):
+    """Best-effort JSON-array extraction. Returns list[dict] or None."""
     import json as _json
     import re as _re
+
+    if not raw:
+        return None
+    # Strip optional Markdown fences
+    raw = _re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=_re.MULTILINE)
+
+    # Prefer a fully-bracketed array if present.
+    match = _re.search(r"\[.*\]", raw, _re.DOTALL)
+    snippet = match.group() if match else None
+
+    if snippet is None:
+        # Truncated / unclosed array — find the first '[' and try to seal it
+        # at the last complete '}' we can see.
+        lb = raw.find("[")
+        rb = raw.rfind("}")
+        if lb >= 0 and rb > lb:
+            snippet = raw[lb : rb + 1] + "]"
+
+    if snippet is None:
+        return None
+
+    try:
+        parsed = _json.loads(snippet)
+        return parsed if isinstance(parsed, list) else None
+    except _json.JSONDecodeError:
+        # Tolerant repair: trim to the last complete object inside the snippet.
+        last_obj = snippet.rfind("}")
+        if last_obj > 0:
+            try:
+                return _json.loads(snippet[: last_obj + 1] + "]")
+            except _json.JSONDecodeError:
+                return None
+    return None
+
+
+def _enrich_vocab_from_web(topic_info, model, tokenizer):
+    """Step 2.6: Search web using topic description, extract vocab with Qwen.
+
+    Quick-win improvements:
+      - Honours `ASR_WEB_VOCAB_ENABLED=false` env kill switch (demo safety).
+      - Sentence-boundary truncation of snippets (cleaner LLM input).
+      - One self-repair retry when the LLM returns malformed JSON.
+      - Quality gate: drops obviously bad terms before returning.
+      - Structured single-line summary log for observability.
+    """
+    import os
+    import time as _time
     from .model import run_inference_raw
 
-    description = topic_info.get("description", "")
-    field = topic_info.get("field", "")
-    topic = topic_info.get("topic", "")
+    if os.environ.get("ASR_WEB_VOCAB_ENABLED", "true").lower() == "false":
+        logger.info("Step 2.6: Disabled via ASR_WEB_VOCAB_ENABLED=false")
+        return []
+
+    description = topic_info.get("description", "") if topic_info else ""
+    field = topic_info.get("field", "") if topic_info else ""
+    topic = topic_info.get("topic", "") if topic_info else ""
 
     if not description or model is None or tokenizer is None:
         logger.info("Step 2.6: Skipped — no description or no model")
+        logger.info("WEB_VOCAB summary status=skipped reason=no_description_or_model")
         return []
 
-    # Search DuckDuckGo
+    t0 = _time.time()
     logger.info("=" * 60)
     logger.info("Step 2.6: WEB VOCAB ENRICHMENT")
 
+    # ── Search ──
     snippets = []
     try:
         from ddgs import DDGS
-
-        queries = [
-            f"{field} {topic} terminology glossary",
-            f"{description[:100]} technical terms",
-        ]
-
-        for q in queries:
-            logger.info("  Searching: %s", q[:80])
-            try:
-                with DDGS() as ddgs:
-                    results = list(ddgs.text(q, max_results=5))
-                for r in results:
-                    body = r.get("body", "")
-                    if body:
-                        snippets.append(body)
-            except Exception as e:
-                logger.warning("  Search failed: %s", e)
-
     except ImportError:
-        logger.warning("  ddgs not installed — skipping web search")
+        logger.warning("  ddgs not installed — run `pip install ddgs>=4.0`")
+        logger.info("WEB_VOCAB summary status=skipped reason=ddgs_missing")
         logger.info("=" * 60)
         return []
+
+    queries = [
+        f"{field} {topic} terminology glossary",
+        f"{description[:100]} technical terms",
+    ]
+    for q in queries:
+        logger.info("  Searching: %s", q[:80])
+        try:
+            with DDGS() as ddgs:
+                results = list(ddgs.text(q, max_results=5))
+            for r in results:
+                body = r.get("body", "")
+                if body:
+                    snippets.append(body)
+        except Exception as e:
+            logger.warning("  Search failed: %s", e)
 
     if not snippets:
         logger.info("  No search results found")
+        logger.info("WEB_VOCAB summary status=empty queries=%d", len(queries))
         logger.info("=" * 60)
         return []
 
-    web_context = " ".join(snippets)[:2500]
-    logger.info("  Got %d chars of web context from %d snippets", len(web_context), len(snippets))
+    web_context = _truncate_at_sentence(" ".join(snippets), 2500)
+    logger.info("  Got %d chars of web context from %d snippets",
+                len(web_context), len(snippets))
 
-    # Send to Qwen to extract vocab (simplified format — no known_errors to save tokens)
+    # ── Extract via LLM (with one repair retry) ──
     extract_prompt = (
         f"This meeting is about: {description}\n"
         f"Field: {field}\n"
@@ -561,33 +896,81 @@ def _enrich_vocab_from_web(topic_info, model, tokenizer):
         "Categories: product_name, tech_term, person_name, company_name, domain_term, tech_acronym\n"
         "Give 10-20 terms. Compact single-line JSON, no newlines."
     )
+    system_prompt = (
+        "You extract domain-specific vocabulary. Return only a compact JSON array."
+    )
 
-    system_prompt = "You extract domain-specific vocabulary. Return only a compact JSON array."
-
+    raw_response = ""
+    parsed = None
     try:
         raw_response = run_inference_raw(
             extract_prompt, system_prompt, model, tokenizer, max_tokens=1024,
         )
-
-        # Parse JSON array from response
-        json_match = _re.search(r'\[.*\]', raw_response, _re.DOTALL)
-        if json_match:
-            vocab = _json.loads(json_match.group())
-            logger.info("  Extracted %d vocab terms:", len(vocab))
-            for v in vocab:
-                logger.info("    %s (%s) — errors: %s",
-                           v.get("term", "?"), v.get("category", "?"),
-                           v.get("known_errors", []))
-            logger.info("=" * 60)
-            return vocab
-        else:
-            logger.warning("  No JSON array found in model response")
-            logger.info("  Raw response: %s", raw_response[:300])
+        parsed = _parse_web_vocab_json(raw_response)
     except Exception as e:
-        logger.warning("  Vocab extraction failed: %s", e)
+        logger.warning("  First extraction call failed: %s", e)
 
+    # One repair retry — feed the malformed output back and ask for valid JSON.
+    if parsed is None and raw_response:
+        logger.info("  Retrying with self-repair…")
+        repair_prompt = (
+            "The previous response was not valid JSON. Return the SAME content "
+            "as a single-line, well-formed JSON array of "
+            '{"term":"…","category":"…"} objects, nothing else.\n\n'
+            "Previous response:\n" + raw_response[:1500]
+        )
+        try:
+            repaired = run_inference_raw(
+                repair_prompt, system_prompt, model, tokenizer, max_tokens=1024,
+            )
+            parsed = _parse_web_vocab_json(repaired)
+        except Exception as e:
+            logger.warning("  Repair call failed: %s", e)
+
+    if parsed is None:
+        logger.warning("  Could not parse web-vocab JSON after retry")
+        logger.info("  Raw (truncated): %s", (raw_response or "")[:240])
+        logger.info("WEB_VOCAB summary status=parse_failed snippets=%d", len(snippets))
+        logger.info("=" * 60)
+        return []
+
+    # ── Quality gate ──
+    accepted, rejected = [], []
+    seen = set()
+    for v in parsed:
+        if not isinstance(v, dict):
+            continue
+        term = (v.get("term") or "").strip()
+        category = (v.get("category") or "").strip().lower()
+        if not term:
+            rejected.append(("empty_term", v))
+            continue
+        if len(term) < 3 or len(term) > 40:
+            rejected.append(("bad_length", term))
+            continue
+        if term.lower() in seen:
+            rejected.append(("duplicate", term))
+            continue
+        if category and category not in _ALLOWED_WEB_VOCAB_CATEGORIES:
+            rejected.append(("bad_category", term))
+            continue
+        seen.add(term.lower())
+        accepted.append({"term": term, "category": category or "domain_term"})
+
+    elapsed_ms = int((_time.time() - t0) * 1000)
+    logger.info("  Accepted %d / %d terms in %dms", len(accepted), len(parsed), elapsed_ms)
+    for v in accepted[:15]:
+        logger.info("    [%s] %s", v["category"], v["term"])
+    if len(accepted) > 15:
+        logger.info("    ... and %d more", len(accepted) - 15)
+    if rejected:
+        logger.info("  Rejected %d (sample): %s", len(rejected), rejected[:5])
+    logger.info(
+        "WEB_VOCAB summary status=ok accepted=%d rejected=%d snippets=%d latency_ms=%d",
+        len(accepted), len(rejected), len(snippets), elapsed_ms,
+    )
     logger.info("=" * 60)
-    return []
+    return accepted
 
 
 def _validate_candidates_via_web(candidates, vocab_terms, topic_info):
@@ -906,6 +1289,118 @@ def _compute_ocr_timestamps(analyses, duration, config):
 
     targeted_ts.sort()
     return targeted_ts[:max_frames]
+
+
+_AVSR_ELIGIBLE_CATEGORIES = {"person_name", "content_word", "custom"}
+
+
+def _gather_avsr_hints(avsr_provider, flagged, candidates, video_url, config):
+    """Step 4.5: Run AVSR on AVSR-eligible candidates and collect hints.
+
+    Quick-win wiring: lazily creates a default provider from `config.avsr_mode`
+    when the caller didn't pass one. Caps work at `config.avsr_max_candidates`.
+    Drops low-confidence hints below `config.avsr_min_speaking_confidence`.
+
+    Returns:
+        list[dict] — one entry per analyzed segment with shape
+        {"start": float, "end": float, "hint": str, "confidence": float,
+         "lip_transcript": Optional[str]}
+    """
+    import os
+    import time as _time
+
+    if config.dry_run or not video_url:
+        return []
+    if os.environ.get("ASR_AVSR_ENABLED", "true").lower() == "false":
+        logger.info("Step 4.5: AVSR disabled via ASR_AVSR_ENABLED=false")
+        return []
+
+    mode = (getattr(config, "avsr_mode", "mediapipe") or "none").lower()
+    if mode == "none":
+        logger.info("Step 4.5: AVSR mode=none — skipping")
+        return []
+
+    # Lazy-create the provider if the caller didn't pass one.
+    if avsr_provider is None:
+        try:
+            from .avsr import get_avsr_provider
+            avsr_provider = get_avsr_provider(mode)
+        except Exception as e:
+            logger.warning("Step 4.5: Could not init AVSR provider (%s) — %s", mode, e)
+            return []
+    if avsr_provider is None:
+        logger.info("Step 4.5: No AVSR provider available — skipping")
+        return []
+
+    # Pick AVSR-eligible candidates: person_name, content_word, custom.
+    # When `avsr_run_on_all_flagged` is true, ignore the category gate and
+    # process every flagged segment instead.
+    run_on_all = bool(getattr(config, "avsr_run_on_all_flagged", False))
+    eligible_ts = []
+    seen = set()
+    for a in flagged:
+        if not (a.start < a.end):
+            continue
+        cats = {getattr(c, "category", "") for c in (a.candidates or [])}
+        if run_on_all or (cats & _AVSR_ELIGIBLE_CATEGORIES):
+            key = (round(a.start, 1), round(a.end, 1))
+            if key in seen:
+                continue
+            seen.add(key)
+            eligible_ts.append((a.start, a.end))
+
+    if not eligible_ts:
+        logger.info(
+            "Step 4.5: No AVSR-eligible segments — skipping (run_on_all=%s)",
+            run_on_all,
+        )
+        return []
+
+    max_n = max(1, int(getattr(config, "avsr_max_candidates", 20)))
+    eligible_ts = eligible_ts[:max_n]
+    pad = float(getattr(config, "avsr_segment_padding_s", 0.5))
+    min_conf = float(getattr(config, "avsr_min_speaking_confidence", 0.55))
+
+    logger.info("=" * 60)
+    logger.info("Step 4.5: AVSR (mode=%s) on %d segments (cap=%d)", mode, len(eligible_ts), max_n)
+
+    hints = []
+    t0 = _time.time()
+    analyzed = 0
+    for (s, e) in eligible_ts:
+        try:
+            hint = avsr_provider.analyze_segment(video_url, max(0.0, s - pad), e + pad)
+        except Exception as exc:
+            logger.warning("  AVSR failed on [%.2f-%.2f]: %s", s, e, exc)
+            continue
+        analyzed += 1
+        if hint is None or not getattr(hint, "face_detected", False):
+            continue
+
+        conf = float(getattr(hint, "speaking_confidence", 0.0) or 0.0)
+        if conf < min_conf and not getattr(hint, "lip_transcript", None):
+            continue  # gated out — useless to the reconciler
+
+        hints.append({
+            "start": s,
+            "end": e,
+            "hint": hint.to_prompt_hint(),
+            "confidence": conf,
+            "lip_transcript": getattr(hint, "lip_transcript", None),
+        })
+
+    elapsed_ms = int((_time.time() - t0) * 1000)
+    logger.info("  Produced %d usable hints (analyzed=%d) in %dms", len(hints), analyzed, elapsed_ms)
+    for h in hints[:5]:
+        logger.info("    [%.1f-%.1fs] %s", h["start"], h["end"], h["hint"])
+    if len(hints) > 5:
+        logger.info("    ... and %d more", len(hints) - 5)
+    logger.info(
+        "AVSR summary status=ok mode=%s analyzed=%d kept=%d dropped=%d latency_ms=%d",
+        mode, analyzed, len(hints), max(0, analyzed - len(hints)), elapsed_ms,
+    )
+    logger.info("=" * 60)
+    return hints
 
 
 def _create_targeted_ocr_provider(ocr_hints_by_ts: dict):

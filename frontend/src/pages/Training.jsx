@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react'
-import { SlidersHorizontal, Database, CheckCircle } from 'lucide-react'
+import { SlidersHorizontal, Database, CheckCircle, Brain, Cpu } from 'lucide-react'
 import { usePolling } from '../hooks/usePolling'
 import api from '../api/client'
+import PageHeader from '../components/ui/PageHeader'
 
 export default function Training() {
   const [iterations, setIterations] = useState('50,000')
@@ -53,26 +54,21 @@ export default function Training() {
 
   return (
     <div>
-      {/* ── Header Editorial ── */}
-      <header className="mb-10 flex justify-between items-end">
-        <div>
-          <nav className="flex gap-2 mb-2">
-            <span className="bg-surface-container-high text-on-surface-variant px-2 py-0.5 rounded-md font-label text-[10px]">
-              /ENGINE/TRAINING/KINETIC_V3
-            </span>
-          </nav>
-          <h2 className="text-4xl font-headline font-extrabold tracking-tight text-on-background">
-            Model Training <span className="text-primary">Orchestration</span>
-          </h2>
-          <p className="text-on-surface-variant mt-2 max-w-xl font-body">
-            Manage hyper-parameters, monitor convergence in real-time, and version adaptive layers for the Kinetic inference engine.
-          </p>
-        </div>
-        <div className="flex flex-col items-end gap-1">
-          <span className="font-label text-sm text-secondary uppercase tracking-tighter">System Status: Nominal</span>
-          <span className="font-label text-2xl font-bold">Apple M3 Max / MLX backend</span>
-        </div>
-      </header>
+      <PageHeader
+        eyebrow="ENGINE · KINETIC v3"
+        title={<>Model Training <span className="text-primary">Orchestration</span></>}
+        description="Manage hyperparameters, monitor convergence in real time, and version adaptive layers for the Kinetic inference engine."
+        icon={Brain}
+        actions={
+          <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-xl border border-outline-variant/15 bg-surface-container-high/60">
+            <Cpu size={14} className="text-secondary" />
+            <div className="flex flex-col leading-tight">
+              <span className="font-label text-[9px] text-secondary uppercase tracking-[0.2em]">Status · Nominal</span>
+              <span className="font-label text-[12px] font-bold text-on-surface">Apple M3 Max · MLX</span>
+            </div>
+          </div>
+        }
+      />
 
       {/* ── Main Bento Grid ── */}
       <div className="grid grid-cols-12 gap-6">

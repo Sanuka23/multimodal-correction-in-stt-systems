@@ -1,15 +1,52 @@
 import { CheckCircle, Loader, XCircle, Clock, SkipForward } from 'lucide-react'
 
 const STEP_LABELS = {
-  request_received: 'Request Received',
-  vocab_merge: 'Vocab Merge',
-  candidate_detection: 'Error Detection',
-  ocr_extraction: 'OCR Extraction',
-  ml_inference: 'Whisper + Reconciliation',
-  avsr_extraction: 'AVSR Extraction',
-  apply_corrections: 'Apply Corrections',
-  complete: 'Complete',
+  request_received:      'Request Received',
+  model_load:            'Model Load',
+  vocab_merge:           'Vocab Merge',
+  candidate_detection:   'Error Detection',
+  topic_classification:  'Topic Classification',
+  web_vocab_enrichment:  'Web Vocab Enrichment',
+  candidate_validation:  'Candidate Validation',
+  ocr_extraction:        'Screen OCR',
+  ocr_vocab_extraction:  'OCR Term Mining',
+  whisper_pass2:         'Whisper Pass 2',
+  avsr_extraction:       'AVSR (Lip Reading)',
+  avsr_pass2:            'AVSR Pass 2',
+  llm_reconciliation:    'LLM Reconciliation',
+  ml_inference:          'Pipeline Total',
+  data_collection:       'Training-Data Collect',
+  apply_corrections:     'Apply Corrections',
+  complete:              'Complete',
 }
+
+/**
+ * One-line description of what each step actually does.
+ * Surfaced in the hover card and the timings panel so it's clear,
+ * for example, that "Screen OCR" and "OCR Term Mining" are different stages.
+ */
+const STEP_DESCRIPTIONS = {
+  request_received:      'Job accepted — vocab parsed, video URL captured.',
+  model_load:            'Loads Qwen3.5-9B (MLX 4-bit) and tokenizer once per process.',
+  vocab_merge:           'Combines built-in domain vocabulary with team / file custom terms.',
+  candidate_detection:   'LLM scans the transcript and flags suspicious words as ASR errors.',
+  topic_classification:  'LLM classifies the meeting field, topic and suggests domain vocab.',
+  web_vocab_enrichment:  'DuckDuckGo searches the topic; LLM extracts a fresh glossary.',
+  candidate_validation:  'Cross-chunk pooling + per-candidate web search to pick best target.',
+  ocr_extraction:        'PaddleOCR reads raw text from ~15 sampled video frames.',
+  ocr_vocab_extraction:  'LLM mines person / product / company names from the OCR text.',
+  whisper_pass2:         'Re-transcribes flagged segments with vocab-biased Whisper small.',
+  avsr_extraction:       'Lip-reading hints from MediaPipe / Auto-AVSR on AVSR-eligible candidates.',
+  avsr_pass2:            'Optional second AVSR pass on uncertain segments.',
+  llm_reconciliation:    'Reconciles original vs Whisper using vocab + OCR + AVSR evidence.',
+  ml_inference:          'Umbrella — wall-clock for the full pipeline (sum of all children).',
+  data_collection:       'Persists applied corrections as JSONL training pairs.',
+  apply_corrections:     'Saves enhanced transcript + correction details to the dashboard DB.',
+  complete:              'Umbrella — final job marker with totals and evidence rollup.',
+}
+
+/** Steps whose duration is the sum of other steps and would double-count. */
+const UMBRELLA_STEPS = new Set(['ml_inference', 'complete'])
 
 const STATUS_CONFIG = {
   completed: {
@@ -89,4 +126,4 @@ export default function PipelineNode({ step, isSelected, onClick }) {
   )
 }
 
-export { STEP_LABELS }
+export { STEP_LABELS, STEP_DESCRIPTIONS, UMBRELLA_STEPS }

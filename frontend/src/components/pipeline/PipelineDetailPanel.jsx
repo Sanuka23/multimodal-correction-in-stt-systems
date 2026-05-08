@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState } from 'react'
 import { X } from 'lucide-react'
 import { STEP_LABELS } from './PipelineNode'
+import { formatFullTimestamp } from '../../utils/datetime'
 
 const STATUS_COLORS = {
   completed: '#4edea3',
@@ -11,12 +12,7 @@ const STATUS_COLORS = {
 }
 
 function formatTimestamp(ts) {
-  if (!ts) return '\u2014'
-  try {
-    return new Date(ts).toLocaleString()
-  } catch {
-    return ts
-  }
+  return formatFullTimestamp(ts) || '\u2014'
 }
 
 /* ---------- Sub-renderers for specific step types ---------- */
@@ -124,10 +120,189 @@ function JsonBlock({ data }) {
   )
 }
 
+/* ---------- New step renderers ---------- */
+
+function PillList({ items, color = '#7bd0ff' }) {
+  if (!items || !items.length) {
+    return <p className="text-xs text-on-surface-variant/60 italic">None.</p>
+  }
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {items.map((it, i) => (
+        <span
+          key={i}
+          className="text-[11px] font-mono px-2 py-0.5 rounded-md"
+          style={{ color, backgroundColor: `${color}18`, border: `1px solid ${color}33` }}
+        >
+          {typeof it === 'string' ? it : it.term || JSON.stringify(it)}
+          {it && it.category ? <span className="opacity-60 ml-1">· {it.category}</span> : null}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function KeyValueGrid({ pairs }) {
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+      {pairs.filter(([, v]) => v != null && v !== '').map(([k, v]) => (
+        <div key={k} className="bg-surface-container-low rounded-lg p-2.5 border border-outline-variant/10">
+          <p className="text-[9px] font-label uppercase tracking-widest text-on-surface-variant/70">{k}</p>
+          <p className="text-[12px] font-mono text-on-surface mt-0.5 break-words">
+            {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+          </p>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function VocabMergeView({ details }) {
+  return (
+    <KeyValueGrid pairs={[
+      ['Domain terms', details.domain_terms],
+      ['Custom terms', details.custom_terms],
+      ['Merged total', details.merged_terms],
+    ]} />
+  )
+}
+
+function ModelLoadView({ details }) {
+  return (
+    <KeyValueGrid pairs={[
+      ['Base model', details.base_model],
+      ['Backend', details.backend],
+      ['Adapter', details.adapter_path],
+      ['Loaded', details.loaded ? 'yes' : 'no'],
+    ]} />
+  )
+}
+
+function TopicClassificationView({ details }) {
+  return (
+    <div className="space-y-3">
+      <KeyValueGrid pairs={[
+        ['Field', details.field],
+        ['Topic', details.topic],
+      ]} />
+      {details.description && (
+        <div>
+          <p className="text-[9px] font-label uppercase tracking-widest text-on-surface-variant/70 mb-1">Description</p>
+          <p className="text-xs text-on-surface-variant leading-relaxed">{details.description}</p>
+        </div>
+      )}
+      {details.suggested_vocab?.length > 0 && (
+        <div>
+          <p className="text-[9px] font-label uppercase tracking-widest text-on-surface-variant/70 mb-1.5">
+            Suggested vocab ({details.suggested_vocab.length})
+          </p>
+          <PillList items={details.suggested_vocab} color="#ffb95f" />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function WebVocabView({ details }) {
+  return (
+    <div className="space-y-3">
+      <KeyValueGrid pairs={[['Terms added', details.terms_added]]} />
+      {details.terms?.length > 0 ? (
+        <PillList items={details.terms} color="#7bd0ff" />
+      ) : (
+        <p className="text-xs text-on-surface-variant/60 italic">No web terms accepted.</p>
+      )}
+    </div>
+  )
+}
+
+function OcrVocabView({ details }) {
+  return (
+    <div className="space-y-3">
+      <KeyValueGrid pairs={[['Terms extracted', details.terms_extracted]]} />
+      {details.terms?.length > 0 ? (
+        <PillList items={details.terms} color="#4edea3" />
+      ) : (
+        <p className="text-xs text-on-surface-variant/60 italic">No structured vocab extracted.</p>
+      )}
+    </div>
+  )
+}
+
+function WhisperPass2View({ details }) {
+  return (
+    <KeyValueGrid pairs={[
+      ['Segments re-transcribed', details.segments_re_transcribed],
+      ['Model', details.model],
+      ['Device', details.device],
+      ['Compute', details.compute_type],
+    ]} />
+  )
+}
+
+function AvsrView({ details }) {
+  return (
+    <div className="space-y-3">
+      <KeyValueGrid pairs={[
+        ['Mode', details.mode],
+        ['Hints emitted', details.hints],
+        ['Lip transcripts', details.lip_transcripts],
+      ]} />
+      {details.samples?.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-[9px] font-label uppercase tracking-widest text-on-surface-variant/70">Samples</p>
+          {details.samples.map((s, i) => (
+            <div key={i} className="text-[11px] font-mono bg-surface-container-low rounded-lg p-2 border border-outline-variant/10">
+              <span className="text-tertiary">[{s.start?.toFixed?.(1) ?? s.start}–{s.end?.toFixed?.(1) ?? s.end}s]</span>{' '}
+              <span className="text-on-surface-variant">{s.hint}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ReconciliationView({ details }) {
+  return (
+    <div className="space-y-3">
+      <KeyValueGrid pairs={[['Swaps', details.swaps]]} />
+      {details.sample_swaps?.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-[9px] font-label uppercase tracking-widest text-on-surface-variant/70">Sample swaps</p>
+          {details.sample_swaps.map((s, i) => (
+            <p key={i} className="text-[11px] font-mono text-on-surface-variant">{s}</p>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CompletionView({ details }) {
+  return (
+    <div className="space-y-3">
+      <KeyValueGrid pairs={[
+        ['Total time', details.total_time_ms ? `${Math.round(details.total_time_ms)}ms` : null],
+        ['Attempted', details.corrections_attempted],
+        ['Applied', details.corrections_applied],
+      ]} />
+      {details.evidence_sources && (
+        <div>
+          <p className="text-[9px] font-label uppercase tracking-widest text-on-surface-variant/70 mb-1.5">Evidence sources</p>
+          <KeyValueGrid pairs={Object.entries(details.evidence_sources)} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ---------- Detail Renderer ---------- */
 
 function StepDetails({ step }) {
   const { name, details } = step
+  if (!details) return <p className="text-xs text-on-surface-variant">No details available.</p>
+
   switch (name) {
     case 'candidate_detection':
       return <CandidateDetectionTable details={details} />
@@ -135,6 +310,25 @@ function StepDetails({ step }) {
       return <MlInferenceTable details={details} />
     case 'ocr_extraction':
       return <OcrExtraction details={details} />
+    case 'model_load':
+      return <ModelLoadView details={details} />
+    case 'vocab_merge':
+      return <VocabMergeView details={details} />
+    case 'topic_classification':
+      return <TopicClassificationView details={details} />
+    case 'web_vocab_enrichment':
+      return <WebVocabView details={details} />
+    case 'ocr_vocab_extraction':
+      return <OcrVocabView details={details} />
+    case 'whisper_pass2':
+      return <WhisperPass2View details={details} />
+    case 'avsr_extraction':
+    case 'avsr_pass2':
+      return <AvsrView details={details} />
+    case 'llm_reconciliation':
+      return <ReconciliationView details={details} />
+    case 'complete':
+      return <CompletionView details={details} />
     default:
       return <JsonBlock data={details} />
   }

@@ -80,3 +80,10 @@ export function useEvalResults(version) {
     enabled: !!version,
   })
 }
+
+export function usePipelineSettings() {
+  return useQuery({
+    queryKey: ['pipelineSettings'],
+    queryFn: () => api.get('/api/pipeline/settings').then((r) => r.data),
+  })
+}

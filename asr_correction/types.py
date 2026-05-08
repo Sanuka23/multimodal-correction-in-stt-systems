@@ -81,3 +81,7 @@ class CorrectionReport:
     corrections_applied: int
     results: List[CorrectionResult]
     processing_time_ms: float
+    # Optional metadata — populated by the pipeline; consumed by dashboards.
+    selector_info: Optional[dict] = None
+    topic_info: Optional[dict] = None
+    evidence_sources: Optional[dict] = None

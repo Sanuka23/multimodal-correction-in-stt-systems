@@ -10,10 +10,12 @@ import {
   Lightbulb,
   ChevronDown,
   ChevronRight,
+  Briefcase,
 } from 'lucide-react'
 import api from '../api/client'
 import { usePolling } from '../hooks/usePolling'
 import Badge from '../components/ui/Badge'
+import PageHeader from '../components/ui/PageHeader'
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -141,31 +143,28 @@ export default function Jobs() {
   /*  RENDER                                                           */
   /* ================================================================ */
   return (
-    <div className="max-w-7xl mx-auto">
-      {/* ── Page Header ───────────────────────────────────────────── */}
-      <div className="flex justify-between items-end mb-12">
-        <div className="space-y-1">
-          <p className="font-label text-xs text-primary uppercase tracking-[0.3em]">
-            System Intelligence
-          </p>
-          <h2 className="font-headline text-4xl font-extrabold text-on-surface tracking-tight">
-            Correction Jobs
-          </h2>
-        </div>
-        <div className="flex gap-3">
-          <button
-            onClick={() => setShowFilters((v) => !v)}
-            className="flex items-center gap-2 px-4 py-2 obsidian-glass hover:bg-surface-bright text-on-surface-variant text-sm font-medium rounded-xl transition-all"
-          >
-            <Filter size={18} />
-            Filters
-          </button>
-          <button className="flex items-center gap-2 px-4 py-2 border border-error/20 text-error hover:bg-error/5 text-sm font-medium rounded-xl transition-all">
-            <Trash2 size={18} />
-            Bulk Delete
-          </button>
-        </div>
-      </div>
+    <div>
+      <PageHeader
+        eyebrow="System Intelligence"
+        title="Correction Jobs"
+        description="Browse every correction run, drill into pipeline steps, and audit applied edits across recent and historical jobs."
+        icon={Briefcase}
+        actions={
+          <>
+            <button
+              onClick={() => setShowFilters((v) => !v)}
+              className="flex items-center gap-2 px-3.5 py-2 obsidian-glass hover:bg-surface-bright text-on-surface-variant text-xs font-medium rounded-xl transition-all"
+            >
+              <Filter size={14} />
+              Filters
+            </button>
+            <button className="flex items-center gap-2 px-3.5 py-2 border border-error/20 text-error hover:bg-error/5 text-xs font-medium rounded-xl transition-all">
+              <Trash2 size={14} />
+              Bulk Delete
+            </button>
+          </>
+        }
+      />
 
       {/* ── Dashboard Bento Grid ──────────────────────────────────── */}
       <div className="grid grid-cols-12 gap-6 mb-10">
