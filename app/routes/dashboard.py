@@ -1,82 +1,18 @@
-"""Dashboard routes — Jinja2 rendered pages + JSON API for React frontend."""
+"""Dashboard routes — JSON API consumed by the React frontend."""
 
-import json
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Request, Query
-from fastapi.templating import Jinja2Templates
+from fastapi import APIRouter, Query
 
-from ..database import list_jobs, get_job_with_steps, list_corrections
-
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-templates = Jinja2Templates(directory=str(PROJECT_ROOT / "templates"))
+from ..database import list_jobs, get_job_with_steps
 
 router = APIRouter(tags=["Dashboard"])
 
 
-@router.get("/dashboard")
-async def dashboard_home(request: Request):
-    """Overview page with recent jobs and stats."""
-    recent_jobs = await list_jobs(limit=20)
-    correction_jobs = [j for j in recent_jobs if j["job_type"] == "correction"]
-    eval_jobs = [j for j in recent_jobs if j["job_type"] == "evaluation"]
-
-    completed_corrections = [j for j in correction_jobs if j["status"] == "completed"]
-    total_corrections = sum(
-        j.get("result_summary", {}).get("corrections_applied", 0)
-        for j in completed_corrections
-    )
-    total_attempted = sum(
-        j.get("result_summary", {}).get("corrections_attempted", 0)
-        for j in completed_corrections
-    )
-    avg_duration = 0
-    completed = [j for j in correction_jobs if j.get("duration_ms")]
-    if completed:
-        avg_duration = sum(j["duration_ms"] for j in completed) / len(completed)
-
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
-        "recent_jobs": recent_jobs[:10],
-        "total_corrections": total_corrections,
-        "total_attempted": total_attempted,
-        "correction_count": len(correction_jobs),
-        "eval_count": len(eval_jobs),
-        "avg_duration_ms": round(avg_duration, 1),
-    })
-
-
-@router.get("/dashboard/compare")
-async def compare_page(request: Request):
-    """Transcript comparison page."""
-    return templates.TemplateResponse("compare.html", {"request": request})
-
-
-@router.get("/dashboard/jobs")
-async def jobs_page(request: Request):
-    """Full job history table."""
-    jobs = await list_jobs(limit=100)
-    return templates.TemplateResponse("jobs.html", {"request": request, "jobs": jobs})
-
-
-@router.get("/dashboard/pipeline/{job_id}")
-async def pipeline_page(request: Request, job_id: str):
-    """Pipeline workflow visualization for a specific job."""
-    job = await get_job_with_steps(job_id)
-    if not job:
-        return templates.TemplateResponse("pipeline.html", {
-            "request": request, "job": None, "job_id": job_id
-        })
-    return templates.TemplateResponse("pipeline.html", {
-        "request": request, "job": job, "job_id": job_id
-    })
-
-
 @router.get("/api/jobs/{job_id}/steps")
 async def get_job_steps(job_id: str):
-    """API endpoint for polling pipeline step progress."""
+    """Polling endpoint for pipeline step progress."""
     job = await get_job_with_steps(job_id)
     if not job:
         return {"error": "Job not found"}
@@ -85,21 +21,6 @@ async def get_job_steps(job_id: str):
         "status": job.get("status"),
         "pipeline_steps": job.get("pipeline_steps", []),
     }
-
-
-@router.get("/dashboard/training")
-async def training_page(request: Request):
-    """Training status and trigger page."""
-    training_jobs = await list_jobs(job_type="training", limit=10)
-    return templates.TemplateResponse("training.html", {
-        "request": request,
-        "training_jobs": training_jobs,
-    })
-
-
-# =====================================================================
-# JSON API Routes for React Frontend
-# =====================================================================
 
 
 @router.get("/api/stats")
@@ -147,7 +68,6 @@ async def api_jobs(
     start = (page - 1) * limit
     page_jobs = all_jobs[start:start + limit]
 
-    # Convert ObjectId to string
     for j in page_jobs:
         if "_id" in j:
             j["_id"] = str(j["_id"])
@@ -177,7 +97,7 @@ async def api_jobs_stats():
         if isinstance(created, str):
             try:
                 created = datetime.fromisoformat(created.replace("Z", "+00:00"))
-            except:
+            except Exception:
                 continue
         date_str = created.strftime("%Y-%m-%d")
         for d in days:
@@ -205,7 +125,7 @@ async def api_health():
 
     return {
         "model_loaded": model_loaded,
-        "model_name": "Qwen2.5-7B-Instruct-4bit",
+        "model_name": "Qwen3.5-9B-MLX-4bit",
         "adapter_path": "asr_correction/adapters",
         "ocr_status": "active",
         "ocr_engine": "PaddleOCR v4",
