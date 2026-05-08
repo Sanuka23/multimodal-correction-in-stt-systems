@@ -23,6 +23,8 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import api from '../api/client'
+import PageHeader from '../components/ui/PageHeader'
+import PipelineStepsSettings from '../components/pipeline/PipelineStepsSettings'
 
 const TABS = ['OCR Settings', 'LLM Filter', 'AVSR Config', 'Sync Triggers']
 
@@ -113,45 +115,42 @@ export default function PipelineControl() {
 
   return (
     <>
-      {/* Header Section */}
-      <div className="flex justify-between items-end mb-10">
-        <div>
-          <h2 className="text-4xl font-extrabold font-headline tracking-tight text-on-background mb-2">
-            Pipeline Configuration
-          </h2>
-          <p className="text-on-surface-variant font-body">
-            Orchestrate multi-modal processing nodes and optimization logic.
-          </p>
-        </div>
-        <div className="flex space-x-3">
-          <div className="relative group">
-            <select
-              value={preset}
-              onChange={(e) => setPreset(e.target.value)}
-              className="pl-4 pr-10 py-2 bg-surface-container-high hover:bg-surface-bright text-on-surface-variant text-sm font-label rounded-lg transition-all appearance-none cursor-pointer border-none focus:ring-2 focus:ring-primary/20"
-            >
-              <option value="">Load Preset...</option>
-              <option value="production-v4">Production-V4</option>
-              <option value="fast-response">Fast-Response</option>
-              <option value="high-accuracy-medical">High-Accuracy-Medical</option>
-            </select>
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none">
-              <Settings2 size={14} />
-            </span>
-          </div>
-          <button className="px-4 py-2 bg-surface-container-high hover:bg-surface-bright text-on-surface-variant text-sm font-label rounded-lg transition-all flex items-center">
-            <Save size={14} className="mr-2" />
-            Save Preset
-          </button>
-          <button className="px-4 py-2 bg-surface-container-high hover:bg-surface-bright text-on-surface-variant text-sm font-label rounded-lg transition-all flex items-center">
-            <RotateCcw size={14} className="mr-2" />
-            Reset
-          </button>
-          <button className="px-6 py-2 bg-primary text-on-primary text-sm font-label font-bold rounded-lg shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center ml-2">
-            <Upload size={14} className="mr-2" />
-            Apply Changes
-          </button>
-        </div>
+      <PageHeader
+        eyebrow="Runtime Operations"
+        title="Pipeline Configuration"
+        description="Orchestrate multi-modal processing nodes, swap models and adapters, and tune evidence thresholds without redeploying."
+        icon={Settings2}
+        actions={
+          <>
+            <div className="relative">
+              <select
+                value={preset}
+                onChange={(e) => setPreset(e.target.value)}
+                className="pl-3 pr-9 py-2 bg-surface-container-high hover:bg-surface-bright text-on-surface-variant text-xs font-label rounded-xl transition-all appearance-none cursor-pointer border border-outline-variant/15 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <option value="">Load Preset…</option>
+                <option value="production-v4">Production-V4</option>
+                <option value="fast-response">Fast-Response</option>
+                <option value="high-accuracy-medical">High-Accuracy-Medical</option>
+              </select>
+              <Settings2 size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none" />
+            </div>
+            <button className="px-3 py-2 bg-surface-container-high hover:bg-surface-bright text-on-surface-variant text-xs font-label rounded-xl transition-all flex items-center gap-1.5">
+              <Save size={13} /> Save
+            </button>
+            <button className="px-3 py-2 bg-surface-container-high hover:bg-surface-bright text-on-surface-variant text-xs font-label rounded-xl transition-all flex items-center gap-1.5">
+              <RotateCcw size={13} /> Reset
+            </button>
+            <button className="px-4 py-2 bg-primary text-on-primary text-xs font-label font-bold rounded-xl shadow-md shadow-primary/30 hover:brightness-110 active:scale-[0.98] transition-all flex items-center gap-1.5">
+              <Upload size={13} /> Apply Changes
+            </button>
+          </>
+        }
+      />
+
+      {/* Per-step toggles — operator can disable any pipeline stage */}
+      <div className="mb-6">
+        <PipelineStepsSettings />
       </div>
 
       {/* Bento Layout */}

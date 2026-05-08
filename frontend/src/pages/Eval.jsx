@@ -11,6 +11,7 @@ import {
   Legend,
 } from 'recharts'
 import { useEvalResults } from '../api/queries'
+import PageHeader from '../components/ui/PageHeader'
 
 function fmt(v, decimals = 2) {
   if (v == null || isNaN(v)) return '\u2014'
@@ -115,40 +116,32 @@ export default function Eval() {
 
   return (
     <div>
-      {/* Header */}
-      <header className="mb-8 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
-        <div>
-          <div className="flex items-center gap-3 mb-2">
-            <BarChart3 size={20} className="text-primary" />
-            <h2 className="font-headline text-3xl font-extrabold text-on-surface tracking-tight">
-              Evaluation Results
-            </h2>
+      <PageHeader
+        eyebrow="Benchmarks"
+        title="Evaluation Results"
+        description="Compare model performance across versions — per-video WER, accent breakdowns, latency percentiles, and TTER target-term gains."
+        icon={BarChart3}
+        actions={
+          <div className="flex bg-surface-container-high rounded-xl p-1 border border-outline-variant/15">
+            {['v1', 'v2'].map((v) => (
+              <button
+                key={v}
+                onClick={() => {
+                  setVersion(v)
+                  setSortKey(null)
+                }}
+                className={`px-4 py-1.5 text-[11px] font-label font-bold uppercase tracking-widest rounded-lg transition-all ${
+                  version === v
+                    ? 'bg-primary text-on-primary shadow-sm'
+                    : 'text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                {v.toUpperCase()} Results
+              </button>
+            ))}
           </div>
-          <p className="text-on-surface-variant font-body max-w-xl">
-            Compare model performance across versions with per-video WER analysis, accent breakdowns, and latency metrics.
-          </p>
-        </div>
-
-        {/* Version Toggle */}
-        <div className="flex bg-surface-container-high rounded-lg p-1 border border-outline-variant/20">
-          {['v1', 'v2'].map((v) => (
-            <button
-              key={v}
-              onClick={() => {
-                setVersion(v)
-                setSortKey(null)
-              }}
-              className={`px-5 py-2 text-xs font-label font-bold uppercase tracking-widest rounded-md transition-all ${
-                version === v
-                  ? 'bg-primary text-on-primary'
-                  : 'text-on-surface-variant hover:text-on-surface'
-              }`}
-            >
-              {v.toUpperCase()} Results
-            </button>
-          ))}
-        </div>
-      </header>
+        }
+      />
 
       {/* Loading / Error */}
       {isLoading && (

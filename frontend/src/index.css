@@ -91,3 +91,104 @@ body { font-family: 'Inter', sans-serif; color: #dae2fd; margin: 0; }
   0% { transform: translateX(-100%); }
   100% { transform: translateX(300%); }
 }
+
+/* ── Pipeline Flow Canvas animations ───────────────────────────────── */
+
+@keyframes flow-dash {
+  to { stroke-dashoffset: -32; }
+}
+.flow-running-path {
+  stroke-dasharray: 8 8;
+  animation: flow-dash 1s linear infinite;
+}
+
+@keyframes node-halo {
+  0%, 100% { transform: scale(1); opacity: 0.45; }
+  50%      { transform: scale(1.18); opacity: 0.15; }
+}
+.node-halo-running { animation: node-halo 1.6s ease-in-out infinite; transform-origin: center; }
+
+@keyframes ring-pulse {
+  0%   { stroke-opacity: 0.6; r: 28; }
+  100% { stroke-opacity: 0;   r: 46; }
+}
+.ring-pulse-running circle.pulse-ring {
+  animation: ring-pulse 1.8s ease-out infinite;
+  transform-origin: center;
+}
+
+@keyframes node-bob {
+  0%, 100% { transform: translate(-50%, -50%) translateY(0); }
+  50%      { transform: translate(-50%, -50%) translateY(-3px); }
+}
+.node-bob-running { animation: node-bob 2.4s ease-in-out infinite; }
+
+@keyframes shimmer-x {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+.shimmer-text {
+  background: linear-gradient(90deg, #c6c6cd 0%, #ffd480 35%, #ffffff 50%, #ffd480 65%, #c6c6cd 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+          background-clip: text;
+  color: transparent;
+  animation: shimmer-x 2.4s linear infinite;
+}
+
+.flow-glow-running {
+  filter: drop-shadow(0 0 6px rgba(255, 212, 128, 0.55));
+}
+.flow-glow-completed {
+  filter: drop-shadow(0 0 4px rgba(78, 222, 163, 0.35));
+}
+
+.hover-card-enter {
+  animation: hover-card-in 160ms ease-out forwards;
+}
+@keyframes hover-card-in {
+  from { opacity: 0; transform: translate(-50%, -8px) scale(0.96); }
+  to   { opacity: 1; transform: translate(-50%, 0)    scale(1);    }
+}
+
+.canvas-bg-grid {
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(123, 208, 255, 0.07) 1px, transparent 0);
+  background-size: 28px 28px;
+}
+
+/* ── Shared design system polish ───────────────────────────────────── */
+
+/* Focus ring used everywhere for keyboard a11y */
+button:focus-visible, a:focus-visible, [role="button"]:focus-visible {
+  outline: 2px solid rgba(123, 208, 255, 0.55);
+  outline-offset: 2px;
+  border-radius: 0.5rem;
+}
+
+/* Hairline divider used in section cards */
+.hairline { background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent); height: 1px; }
+
+/* Eyebrow utility — uppercase mini label */
+.eyebrow {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--color-on-surface-variant);
+  opacity: 0.7;
+}
+
+/* Hover lift used for interactive cards */
+.lift-on-hover {
+  transition: transform 200ms ease, box-shadow 200ms ease, background-color 200ms ease;
+}
+.lift-on-hover:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 30px -16px rgba(0, 0, 0, 0.55);
+}
+
+/* Custom scrollbar — slightly more prominent in scroll areas */
+.scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(123,208,255,0.18); border-radius: 4px; }
+.scrollbar-thin::-webkit-scrollbar-thumb:hover { background: rgba(123,208,255,0.32); }

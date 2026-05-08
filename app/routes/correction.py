@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from ..auth import get_jwt_info
 from ..database import create_job, complete_job, fail_job, save_correction, get_cached_ocr, cache_ocr_result, update_job_step
+from ..services.pipeline_settings import apply_to_config as apply_pipeline_settings
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,34 @@ def _run_in_thread(fn):
     """Run a blocking function in a thread pool."""
     loop = asyncio.get_event_loop()
     return loop.run_in_executor(None, fn)
+
+
+def _make_step_bridge(loop, job_id: str):
+    """Return a sync callable that the pipeline (running in a worker thread)
+    can call to record pipeline-step events into MongoDB.
+
+    Each call BLOCKS until the MongoDB write completes. This is required to
+    preserve ordering — without it, two events for the same step name
+    (e.g. running → completed) can race and push duplicate rows because the
+    `completed` event's name lookup runs before the `running` event has
+    persisted.
+
+    The cost is ~5–10 ms per step write, negligible compared to the rest
+    of the pipeline.
+    """
+    def _bridge(name: str, status: str, duration_ms=None, details=None):
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                update_job_step(job_id, name, status, duration_ms, details),
+                loop,
+            )
+            # Block — but never longer than 5 s, and never let a slow Mongo
+            # write take down the pipeline.
+            future.result(timeout=5)
+        except Exception as exc:
+            logger.debug("step bridge failed for %s/%s: %s", name, status, exc)
+
+    return _bridge
 
 
 @router.post("/asr-analyze")
@@ -149,36 +178,39 @@ async def asr_correct(
             logger.info("Video URL: available (Quick OCR + Whisper Pass 2 will run)")
         else:
             logger.info("Video URL: not provided (OCR + Whisper Pass 2 skipped)")
-        await update_job_step(job_id, "ocr_extraction", "pending" if video_url else "skipped")
-
-        # AVSR disabled for now
-        avsr_provider = None
-        logger.info("AVSR: Disabled — skipping AVSR initialization")
-        await update_job_step(job_id, "avsr_extraction", "skipped", details={"reason": "disabled"})
 
         # Parse custom vocabulary
-        await update_job_step(job_id, "vocab_merge", "running")
-        vocab_step_start = time.time()
         vocab = request.custom_vocabulary
         if isinstance(vocab, str):
             vocab = [v.strip() for v in vocab.split("\n") if v.strip()]
         logger.info("Vocabulary: %d custom terms provided", len(vocab) if vocab else 0)
 
         config = CorrectionConfig(dry_run=False)
+        # Apply operator-controlled per-step toggles (UI: Pipeline Control panel)
+        apply_pipeline_settings(config)
         logger.info(
-            "Config: dry_run=%s, confidence_threshold=%.2f, backend=%s",
+            "Config: dry_run=%s, confidence_threshold=%.2f, backend=%s | "
+            "toggles: topic=%s web_vocab=%s validate=%s ocr=%s ocr_vocab=%s "
+            "whisper2=%s avsr=%s collect=%s",
             config.dry_run, config.confidence_threshold, config.backend or "auto",
+            config.enable_topic_classification,
+            config.enable_web_vocab_enrichment,
+            config.enable_candidate_validation,
+            config.enable_ocr_extraction,
+            config.enable_ocr_vocab_extraction,
+            config.enable_whisper_pass2,
+            config.enable_avsr,
+            config.enable_data_collection,
         )
 
-        vocab_duration_ms = (time.time() - vocab_step_start) * 1000
-        await update_job_step(job_id, "vocab_merge", "completed", duration_ms=vocab_duration_ms, details={
-            "custom_terms": len(vocab) if vocab else 0
-        })
+        # Build step bridge — the pipeline emits events for every internal stage,
+        # this bridge writes them into MongoDB so the Pipeline Monitor sees them
+        # in real time.
+        loop = asyncio.get_running_loop()
+        step_bridge = _make_step_bridge(loop, job_id)
 
-        # Run two-stage correction pipeline (selector → targeted OCR → correction)
-        await update_job_step(job_id, "candidate_detection", "running")
-        await update_job_step(job_id, "ml_inference", "running")
-        logger.info("Starting two-stage correction pipeline...")
+        # Run the full pipeline in a worker thread.
+        logger.info("Starting full correction pipeline...")
         inference_start = time.time()
 
         def _run_correction():
@@ -187,31 +219,19 @@ async def asr_correct(
                 file_id=request.file_id,
                 custom_vocabulary=vocab,
                 ocr_provider=ocr_provider,
-                avsr_provider=None,
+                avsr_provider=None,  # auto-created by pipeline from config.avsr_mode
                 video_url=video_url,
                 config=config,
+                step_callback=step_bridge,
             )
 
         enhanced, report = await _run_in_thread(_run_correction)
         inference_ms = (time.time() - inference_start) * 1000
         logger.info("ML pipeline completed in %.0fms", inference_ms)
 
-        # Build candidate list for dashboard
-        candidate_list = []
-        for r in report.results:
-            candidate_list.append({
-                "term": r.candidate.term,
-                "error": r.candidate.error_found,
-                "category": r.candidate.category,
-                "timestamp": f"{r.candidate.timestamp_start:.0f}-{r.candidate.timestamp_end:.0f}s",
-            })
-
-        await update_job_step(job_id, "candidate_detection", "completed", duration_ms=inference_ms, details={
-            "candidates_found": len(report.results),
-            "candidates": candidate_list,
-        })
-
-        # Build per-correction results for dashboard
+        # Build per-correction results — kept on `ml_inference` for back-compat
+        # with any old dashboard rendering that looks at this name. The pipeline
+        # already emits `llm_reconciliation`; this is the user-facing summary.
         inference_results = []
         for r in report.results:
             inference_results.append({
@@ -228,36 +248,8 @@ async def asr_correct(
             "corrections_attempted": report.corrections_attempted,
             "corrections_applied": report.corrections_applied,
             "results": inference_results,
+            "evidence_sources": getattr(report, "evidence_sources", None),
         })
-
-        # AVSR pass 2 status
-        lip_needed = [r for r in report.results if r.need_lip or (not r.applied and r.confidence < 0.8)]
-        lip_flagged_terms = [{"error": r.candidate.error_found, "term": r.candidate.term,
-                              "confidence": round(r.confidence, 2), "need_lip": r.need_lip}
-                             for r in report.results if r.need_lip or (not r.applied and r.confidence < 0.8)]
-
-        if avsr_provider and request.video_url and lip_needed:
-            await update_job_step(job_id, "avsr_extraction", "completed", details={
-                "mode": config.avsr_mode,
-                "segments_analyzed": min(len(lip_needed), config.avsr_max_segments),
-                "flagged_segments": lip_flagged_terms[:10],
-            })
-            await update_job_step(job_id, "avsr_pass2", "completed", details={
-                "segments_reanalyzed": min(len(lip_needed), config.avsr_max_segments),
-                "flagged_segments": lip_flagged_terms[:10],
-            })
-        else:
-            if not avsr_provider:
-                await update_job_step(job_id, "avsr_extraction", "skipped", details={
-                    "mode": "disabled", "reason": "AVSR not configured",
-                })
-            elif not lip_needed:
-                await update_job_step(job_id, "avsr_extraction", "skipped", details={
-                    "mode": config.avsr_mode, "reason": "No uncertain segments — all corrections confident",
-                })
-            await update_job_step(job_id, "avsr_pass2", "skipped", details={
-                "reason": "No segments needed AVSR" if not lip_needed else "No video URL"
-            })
 
         # Build vocab_used list
         domain_vocab = load_domain_vocab(config.domain_vocab_path)
